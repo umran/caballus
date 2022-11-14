@@ -9,26 +9,6 @@
 // UPDATE drivers SET (status) VALUES ('ASSIGNED') WHERE id = bid.driver_id
 // COMMIT
 
-// use crate::db::{DBHandle, TransactionError};
-
-// pub async fn assign_driver<T: DBHandle<DB = Postgres>>(
-//     db_handle: T,
-//     trip_id: &str,
-// ) -> Result<bool, String> {
-//     let mut conn = db_handle.acquire_conn().await.unwrap();
-
-//     db_handle
-//         .exec_tx(|tx| {
-//             Box::pin(async move {
-//                 let res: Result<(), TransactionError<String>> = Ok(());
-//                 res
-//             })
-//         })
-//         .await;
-
-//     Ok(true)
-// }
-
 use async_trait::async_trait;
 use sqlx::{types::Json, Executor, Postgres, Row};
 
