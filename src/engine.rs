@@ -7,7 +7,7 @@ use crate::{
     bid::Bid,
     db::{DBHandle, TransactionError},
     driver::Driver,
-    error::{self, Error},
+    error::{self, invalid_input_error, Error},
     route::{Place, Route},
     trip::Trip,
 };
@@ -52,16 +52,15 @@ impl<T: DBHandle<DB = Database>> RouteAPI for Engine<T> {
             .await
             .map_err(|err| error::database_error(err))?;
 
-        match maybe_result {
-            Some(result) => {
-                let Json(route) = result
-                    .try_get("data")
-                    .map_err(|err| error::database_error(err))?;
+        if let Some(result) = maybe_result {
+            let Json(route) = result
+                .try_get("data")
+                .map_err(|err| error::database_error(err))?;
 
-                Ok(route)
-            }
-            None => Err(error::invalid_input_error()),
+            return Ok(route);
         }
+
+        Err(error::invalid_input_error())
     }
 }
 
@@ -75,15 +74,14 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
             .await
             .map_err(|err| error::database_error(err))?;
 
-        match maybe_result {
-            Some(result) => {
-                let Json(trip) = result
-                    .try_get("data")
-                    .map_err(|err| error::database_error(err))?;
-                Ok(trip)
-            }
-            None => Err(error::invalid_input_error()),
+        if let Some(result) = maybe_result {
+            let Json(trip) = result
+                .try_get("data")
+                .map_err(|err| error::database_error(err))?;
+            return Ok(trip);
         }
+
+        Err(error::invalid_input_error())
     }
 
     async fn create_trip(&self, route_id: String, passenger_id: String) -> Result<Trip, Error> {
@@ -94,24 +92,23 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
             .await
             .map_err(|err| error::database_error(err))?;
 
-        match maybe_result {
-            Some(_) => {
-                let trip_id = "".to_string();
-                let trip = Trip::new(trip_id, route_id, passenger_id);
+        if let Some(_) = maybe_result {
+            let trip_id = "".to_string();
+            let trip = Trip::new(trip_id, route_id, passenger_id);
 
-                conn.execute(
-                    sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
-                        .bind(&trip.id)
-                        .bind(&trip.status_string())
-                        .bind(Json(&trip)),
-                )
-                .await
-                .map_err(|err| error::database_error(err))?;
+            conn.execute(
+                sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
+                    .bind(&trip.id)
+                    .bind(&trip.status_string())
+                    .bind(Json(&trip)),
+            )
+            .await
+            .map_err(|err| error::database_error(err))?;
 
-                Ok(trip)
-            }
-            None => Err(error::invalid_input_error()),
+            return Ok(trip);
         }
+
+        Err(error::invalid_input_error())
     }
 
     async fn expand_search(&self, id: String) -> Result<Trip, Error> {
@@ -127,25 +124,24 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                         .await
                         .map_err(|err| error::database_error(err))?;
 
-                    match maybe_result {
-                        Some(result) => {
-                            let Json::<Trip>(mut trip) = result
-                                .try_get("data")
-                                .map_err(|err| error::database_error(err))?;
-                            trip.expand_search()?;
-
-                            tx.execute(
-                                sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
-                                    .bind(&id)
-                                    .bind(Json(&trip)),
-                            )
-                            .await
+                    if let Some(result) = maybe_result {
+                        let Json::<Trip>(mut trip) = result
+                            .try_get("data")
                             .map_err(|err| error::database_error(err))?;
+                        trip.expand_search()?;
 
-                            Ok(trip)
-                        }
-                        None => Err(error::invalid_input_error()),
+                        tx.execute(
+                            sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
+                                .bind(&id)
+                                .bind(Json(&trip)),
+                        )
+                        .await
+                        .map_err(|err| error::database_error(err))?;
+
+                        return Ok(trip);
                     }
+
+                    Err(invalid_input_error())
                 })
             })
             .await
