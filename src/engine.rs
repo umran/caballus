@@ -214,7 +214,7 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                             .try_get("data")
                             .map_err(|err| error::database_error(err))?;
 
-                        trip.accept_bid(bid_id)?;
+                        trip.select_bid(bid_id)?;
 
                         tx.execute(
                             sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
@@ -254,8 +254,6 @@ impl<T: DBHandle<DB = Database>> API for Engine<T> {}
 
 #[test]
 fn new_engine() {
-    fn send_test<T: Send>(x: T) {}
-
     use crate::db::PgStore;
     use tokio_test::block_on;
 
@@ -265,9 +263,5 @@ fn new_engine() {
     ))
     .unwrap();
 
-    let engine = block_on(Engine::new(pg_store));
-
-    let arc_engine = std::sync::Arc::new(engine);
-
-    send_test(arc_engine);
+    block_on(Engine::new(pg_store));
 }

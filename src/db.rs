@@ -33,13 +33,13 @@ impl PgStore {
             .await?;
 
         // TODO: move this to migrations
-        pool.execute("CREATE TABLE IF NOT EXISTS routes (id SERIAL PRIMARY KEY, data jsonb)")
+        pool.execute("CREATE TABLE IF NOT EXISTS routes (id UUID PRIMARY KEY, data jsonb)")
             .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS trips (id SERIAL PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
+        pool.execute("CREATE TABLE IF NOT EXISTS trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
             .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS drivers (id SERIAL PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
+        pool.execute("CREATE TABLE IF NOT EXISTS drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
             .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS bids (id SERIAL PRIMARY KEY, trip_id INT4 NOT NULL, driver_id INT4 NOT NULL, amount INT4 NOT NULL, CONSTRAINT fk_bid_trip FOREIGN KEY(trip_id) REFERENCES trips(id), CONSTRAINT fk_bid_driver FOREIGN KEY(driver_id) REFERENCES drivers(id))")
+        pool.execute("CREATE TABLE IF NOT EXISTS bids (id UUID PRIMARY KEY, trip_id UUID NOT NULL, driver_id UUID NOT NULL, amount INT4 NOT NULL, CONSTRAINT fk_bid_trip FOREIGN KEY(trip_id) REFERENCES trips(id), CONSTRAINT fk_bid_driver FOREIGN KEY(driver_id) REFERENCES drivers(id))")
             .await?;
 
         Ok(Self { pool })

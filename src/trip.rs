@@ -10,7 +10,7 @@ pub struct Trip {
     pub status: Status,
     pub route_id: String,
     pub passenger_id: String,
-    pub accepted_bid_id: Option<String>,
+    pub selected_bid_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl Trip {
             status,
             route_id,
             passenger_id,
-            accepted_bid_id: None,
+            selected_bid_id: None,
         }
     }
 
@@ -101,13 +101,13 @@ impl Trip {
         }
     }
 
-    pub fn accept_bid(&mut self, bid_id: String) -> Result<(), Error> {
+    pub fn select_bid(&mut self, bid_id: String) -> Result<(), Error> {
         match &self.status {
             Status::Searching {
                 deadline: _,
                 radius: _,
             } => {
-                self.accepted_bid_id = Some(bid_id);
+                self.selected_bid_id = Some(bid_id);
 
                 self.status = Status::PendingConfirmation {
                     deadline: Utc::now() + Duration::seconds(60),
