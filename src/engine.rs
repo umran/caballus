@@ -194,9 +194,19 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
 
                         driver.assign_trip(trip_id.clone())?;
 
+                        tx.execute(
+                            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                                .bind(&driver_id)
+                                .bind(&driver.status_string())
+                                .bind(Json(&driver)),
+                        )
+                        .await
+                        .map_err(|err| error::database_error(err))?;
+
                         let trip_result = tx
                             .fetch_one(
-                                sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&trip_id),
+                                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE")
+                                    .bind(&trip_id),
                             )
                             .await
                             .map_err(|err| error::database_error(err))?;
