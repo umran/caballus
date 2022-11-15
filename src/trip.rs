@@ -17,7 +17,7 @@ pub struct Trip {
 pub enum Status {
     Searching {
         deadline: DateTime<Utc>,
-        radius: Radius,
+        radius: f64,
     },
     PendingConfirmation {
         deadline: DateTime<Utc>,
@@ -41,14 +41,11 @@ pub enum PenaltyBearer {
     Driver,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Radius(f64);
-
 impl Trip {
     pub fn new(id: String, route_id: String, passenger_id: String) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
-            radius: Radius(1000.0),
+            radius: 1000.0,
         };
 
         Self {
@@ -87,15 +84,15 @@ impl Trip {
         }
     }
 
-    pub fn expand_search(&mut self, radius: Radius) -> Result<(), Error> {
+    pub fn expand_search(&mut self) -> Result<(), Error> {
         match &self.status {
             Status::Searching {
                 deadline: _,
-                radius: _,
+                radius,
             } => {
                 self.status = Status::Searching {
                     deadline: Utc::now() + Duration::seconds(60),
-                    radius,
+                    radius: *radius * 1.1,
                 };
 
                 Ok(())

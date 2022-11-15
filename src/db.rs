@@ -13,11 +13,11 @@ pub enum TransactionError<E> {
 pub trait DBHandle {
     type DB: Database;
 
-    async fn exec_tx<E, F>(&self, f: F) -> Result<(), TransactionError<E>>
+    async fn exec_tx<F, S, E>(&self, f: F) -> Result<S, TransactionError<E>>
     where
         for<'tx> F: FnOnce(
             &'tx mut sqlx::Transaction<Self::DB>,
-        ) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'tx>>;
+        ) -> Pin<Box<dyn Future<Output = Result<S, E>> + 'tx>>;
     async fn acquire_conn(&self) -> Result<PoolConnection<Self::DB>, sqlx::Error>;
 }
 
@@ -39,7 +39,7 @@ impl PgStore {
             .await?;
         pool.execute("CREATE TABLE IF NOT EXISTS drivers (id SERIAL PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
             .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS bids (id SERIAL PRIMARY KEY, trip_id INT4 NOT NULL, driver_id INT4 NOT NULL, fare INT4 NOT NULL, CONSTRAINT fk_bid_trip FOREIGN KEY(trip_id) REFERENCES trips(id), CONSTRAINT fk_bid_driver FOREIGN KEY(driver_id) REFERENCES drivers(id))")
+        pool.execute("CREATE TABLE IF NOT EXISTS bids (id SERIAL PRIMARY KEY, trip_id INT4 NOT NULL, driver_id INT4 NOT NULL, amount INT4 NOT NULL, CONSTRAINT fk_bid_trip FOREIGN KEY(trip_id) REFERENCES trips(id), CONSTRAINT fk_bid_driver FOREIGN KEY(driver_id) REFERENCES drivers(id))")
             .await?;
 
         Ok(Self { pool })
@@ -50,11 +50,11 @@ impl PgStore {
 impl DBHandle for PgStore {
     type DB = Postgres;
 
-    async fn exec_tx<E, F>(&self, f: F) -> Result<(), TransactionError<E>>
+    async fn exec_tx<F, S, E>(&self, f: F) -> Result<S, TransactionError<E>>
     where
         for<'tx> F: FnOnce(
             &'tx mut sqlx::Transaction<Self::DB>,
-        ) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'tx>>,
+        ) -> Pin<Box<dyn Future<Output = Result<S, E>> + 'tx>>,
     {
         let mut tx = self
             .pool
@@ -62,14 +62,20 @@ impl DBHandle for PgStore {
             .await
             .map_err(|e| TransactionError::DBError(e))?;
 
-        if let Err(e) = f(&mut tx).await {
-            tx.rollback()
-                .await
-                .map_err(|e| TransactionError::DBError(e))?;
-            return Err(TransactionError::ApplicationError(e));
-        }
+        let result = f(&mut tx).await;
 
-        tx.commit().await.map_err(|e| TransactionError::DBError(e))
+        match result {
+            Ok(r) => {
+                tx.commit()
+                    .await
+                    .map_err(|e| TransactionError::DBError(e))?;
+                Ok(r)
+            }
+            Err(e) => match tx.rollback().await {
+                Ok(_) => Err(TransactionError::ApplicationError(e)),
+                Err(e) => Err(TransactionError::DBError(e)),
+            },
+        }
     }
 
     async fn acquire_conn(&self) -> Result<PoolConnection<Self::DB>, sqlx::Error> {
