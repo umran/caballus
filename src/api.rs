@@ -5,13 +5,13 @@ use crate::error::Error;
 use crate::route::{Place, Route};
 use crate::trip::Trip;
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait RouteAPI {
     async fn find_route(&self, id: String) -> Result<Route, Error>;
     async fn create_route(&self, origin: Place, destination: Place) -> Result<Route, Error>;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait TripAPI {
     async fn find_trip(&self, id: String) -> Result<Trip, Error>;
 

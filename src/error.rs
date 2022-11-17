@@ -1,7 +1,9 @@
+use axum::extract::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde_json::json;
 use std::fmt::Debug;
 use tracing::instrument;
-
-use crate::db::TransactionError;
 
 #[derive(Debug)]
 pub struct Error {
@@ -9,18 +11,24 @@ pub struct Error {
     pub message: String,
 }
 
-impl From<sqlx::Error> for Error {
-    fn from(err: sqlx::Error) -> Error {
-        database_error(err)
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self.code {
+            1..=99 => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
+            _ => (StatusCode::BAD_REQUEST, self.message.as_str()),
+        };
+
+        let body = Json(json!({
+            "error": error_message,
+        }));
+
+        (status, body).into_response()
     }
 }
 
-impl From<TransactionError<Error>> for Error {
-    fn from(err: TransactionError<Error>) -> Error {
-        match err {
-            TransactionError::ApplicationError(err) => err,
-            TransactionError::DBError(err) => database_error(err),
-        }
+impl From<sqlx::Error> for Error {
+    fn from(err: sqlx::Error) -> Error {
+        database_error(err)
     }
 }
 

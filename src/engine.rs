@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use futures::TryStreamExt;
-use sqlx::{pool::PoolConnection, types::Json, Executor, Postgres, Row};
+use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
 
 use crate::{
     api::{RouteAPI, TripAPI, API},
     bid::Bid,
-    db::DBHandle,
     driver::Driver,
     error::{self, invalid_input_error, Error},
     route::{Place, Route},
@@ -15,30 +14,33 @@ use crate::{
 type Database = Postgres;
 
 #[derive(Debug)]
-pub struct Engine<T: DBHandle<DB = Database>> {
-    db_handle: T,
+pub struct Engine {
+    pool: Pool<Database>,
 }
 
-impl<T: DBHandle<DB = Database>> Engine<T> {
-    pub fn new(db_handle: T) -> Self {
-        Self { db_handle }
-    }
+impl Engine {
+    pub async fn new(pool: Pool<Database>) -> Result<Self, Error> {
+        pool.execute("CREATE TABLE IF NOT EXISTS routes (id UUID PRIMARY KEY, data jsonb)")
+            .await?;
+        pool.execute("CREATE TABLE IF NOT EXISTS trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
+            .await?;
+        pool.execute("CREATE TABLE IF NOT EXISTS drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
+            .await?;
+        pool.execute("CREATE TABLE IF NOT EXISTS bids (id UUID PRIMARY KEY, trip_id UUID NOT NULL, driver_id UUID NOT NULL, amount INT4 NOT NULL, CONSTRAINT fk_bid_trip FOREIGN KEY(trip_id) REFERENCES trips(id), CONSTRAINT fk_bid_driver FOREIGN KEY(driver_id) REFERENCES drivers(id))")
+            .await?;
 
-    async fn get_db_conn(&self) -> Result<PoolConnection<Database>, Error> {
-        let conn = self.db_handle.acquire_conn().await?;
-
-        Ok(conn)
+        Ok(Self { pool })
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DBHandle<DB = Database>> RouteAPI for Engine<T> {
+#[async_trait]
+impl RouteAPI for Engine {
     async fn create_route(&self, origin: Place, destination: Place) -> Result<Route, Error> {
         Ok(Route::new(origin, destination))
     }
 
     async fn find_route(&self, id: String) -> Result<Route, Error> {
-        let mut conn = self.get_db_conn().await?;
+        let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT data FROM routes WHERE id = $1").bind(&id))
@@ -54,10 +56,10 @@ impl<T: DBHandle<DB = Database>> RouteAPI for Engine<T> {
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
+#[async_trait]
+impl TripAPI for Engine {
     async fn find_trip(&self, id: String) -> Result<Trip, Error> {
-        let mut conn = self.get_db_conn().await?;
+        let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
@@ -72,7 +74,7 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
     }
 
     async fn create_trip(&self, route_id: String, passenger_id: String) -> Result<Trip, Error> {
-        let mut conn = self.get_db_conn().await?;
+        let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT id FROM routes WHERE id = $1").bind(&route_id))
@@ -96,41 +98,36 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
     }
 
     async fn expand_search(&self, id: String) -> Result<Trip, Error> {
-        let trip = self
-            .db_handle
-            .exec_tx(|tx| {
-                Box::pin(async move {
-                    let maybe_result = tx
-                        .fetch_optional(
-                            sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE")
-                                .bind(&id),
-                        )
-                        .await?;
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
 
-                    if let Some(result) = maybe_result {
-                        let Json::<Trip>(mut trip) = result.try_get("data")?;
-                        trip.expand_search()?;
-
-                        tx.execute(
-                            sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
-                                .bind(&id)
-                                .bind(Json(&trip)),
-                        )
-                        .await?;
-
-                        return Ok(trip);
-                    }
-
-                    Err(invalid_input_error())
-                })
-            })
+        let maybe_result = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&id),
+            )
             .await?;
 
-        Ok(trip)
+        if let Some(result) = maybe_result {
+            let Json::<Trip>(mut trip) = result.try_get("data")?;
+            trip.expand_search()?;
+
+            tx.execute(
+                sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
+                    .bind(&id)
+                    .bind(Json(&trip)),
+            )
+            .await?;
+
+            tx.commit().await?;
+
+            return Ok(trip);
+        }
+
+        Err(invalid_input_error())
     }
 
     async fn evaluate_bids(&self, id: String) -> Result<Option<Trip>, Error> {
-        let mut conn = self.get_db_conn().await?;
+        let mut conn = self.pool.acquire().await?;
 
         let mut results = conn.fetch(
             sqlx::query("SELECT id, driver_id, fare FROM bids WHERE trip_id = $1").bind(&id),
@@ -141,58 +138,51 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
             let bid_id: String = row.try_get("id")?;
             let driver_id: String = row.try_get("driver_id")?;
 
-            let maybe_trip: Option<Trip> = self
-                .db_handle
-                .exec_tx(|tx| {
-                    Box::pin(async move {
-                        let driver_result = tx
-                            .fetch_one(
-                                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE")
-                                    .bind(&driver_id),
-                            )
-                            .await?;
-                        let Json::<Driver>(mut driver) = driver_result.try_get("data")?;
+            let mut conn = self.pool.acquire().await?;
+            let mut tx = conn.begin().await?;
 
-                        if !driver.is_available() {
-                            return Ok(None);
-                        }
-
-                        driver.assign_trip(trip_id.clone())?;
-
-                        tx.execute(
-                            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
-                                .bind(&driver_id)
-                                .bind(&driver.status_string())
-                                .bind(Json(&driver)),
-                        )
-                        .await?;
-
-                        let trip_result = tx
-                            .fetch_one(
-                                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE")
-                                    .bind(&trip_id),
-                            )
-                            .await?;
-                        let Json::<Trip>(mut trip) = trip_result.try_get("data")?;
-
-                        trip.select_bid(bid_id)?;
-
-                        tx.execute(
-                            sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
-                                .bind(&trip_id)
-                                .bind(&trip.status_string())
-                                .bind(Json(&trip)),
-                        )
-                        .await?;
-
-                        Ok(Some(trip))
-                    })
-                })
+            let driver_result = tx
+                .fetch_one(
+                    sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE")
+                        .bind(&driver_id),
+                )
                 .await?;
+            let Json::<Driver>(mut driver) = driver_result.try_get("data")?;
 
-            if maybe_trip.is_some() {
-                return Ok(maybe_trip);
+            if !driver.is_available() {
+                return Ok(None);
             }
+
+            driver.assign_trip(trip_id.clone())?;
+
+            tx.execute(
+                sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                    .bind(&driver_id)
+                    .bind(&driver.status_string())
+                    .bind(Json(&driver)),
+            )
+            .await?;
+
+            let trip_result = tx
+                .fetch_one(
+                    sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&trip_id),
+                )
+                .await?;
+            let Json::<Trip>(mut trip) = trip_result.try_get("data")?;
+
+            trip.select_bid(bid_id)?;
+
+            tx.execute(
+                sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
+                    .bind(&trip_id)
+                    .bind(&trip.status_string())
+                    .bind(Json(&trip)),
+            )
+            .await?;
+
+            tx.commit().await?;
+
+            return Ok(Some(trip));
         }
 
         Ok(None)
@@ -206,18 +196,18 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
     }
 }
 
-impl<T: DBHandle<DB = Database>> API for Engine<T> {}
+impl API for Engine {}
 
 #[test]
 fn new_engine() {
-    use crate::db::PgStore;
+    use crate::db::PgPool;
     use tokio_test::block_on;
 
-    let pg_store = block_on(PgStore::new(
+    let PgPool(pool) = block_on(PgPool::new(
         "postgresql://caballus:caballus@localhost:5432/caballus",
         5,
     ))
     .unwrap();
 
-    Engine::new(pg_store);
+    block_on(Engine::new(pool)).unwrap();
 }
