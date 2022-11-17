@@ -71,10 +71,7 @@ impl DBHandle for PgStore {
                     .map_err(|e| TransactionError::DBError(e))?;
                 Ok(r)
             }
-            Err(e) => match tx.rollback().await {
-                Ok(_) => Err(TransactionError::ApplicationError(e)),
-                Err(e) => Err(TransactionError::DBError(e)),
-            },
+            Err(e) => Err(TransactionError::ApplicationError(e)),
         }
     }
 
