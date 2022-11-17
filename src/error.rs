@@ -1,10 +1,27 @@
 use std::fmt::Debug;
 use tracing::instrument;
 
+use crate::db::TransactionError;
+
 #[derive(Debug)]
 pub struct Error {
     pub code: i32,
     pub message: String,
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(err: sqlx::Error) -> Error {
+        database_error(err)
+    }
+}
+
+impl From<TransactionError<Error>> for Error {
+    fn from(err: TransactionError<Error>) -> Error {
+        match err {
+            TransactionError::ApplicationError(err) => err,
+            TransactionError::DBError(err) => database_error(err),
+        }
+    }
 }
 
 pub fn invalid_state_error() -> Error {

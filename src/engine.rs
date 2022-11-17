@@ -5,7 +5,7 @@ use sqlx::{pool::PoolConnection, types::Json, Executor, Postgres, Row};
 use crate::{
     api::{RouteAPI, TripAPI, API},
     bid::Bid,
-    db::{DBHandle, TransactionError},
+    db::DBHandle,
     driver::Driver,
     error::{self, invalid_input_error, Error},
     route::{Place, Route},
@@ -20,28 +20,21 @@ pub struct Engine<T: DBHandle<DB = Database>> {
 }
 
 impl<T: DBHandle<DB = Database>> Engine<T> {
-    pub async fn new(db_handle: T) -> Self {
+    pub fn new(db_handle: T) -> Self {
         Self { db_handle }
     }
 
     async fn get_db_conn(&self) -> Result<PoolConnection<Database>, Error> {
-        self.db_handle
-            .acquire_conn()
-            .await
-            .map_err(|err| error::database_error(err))
+        let conn = self.db_handle.acquire_conn().await?;
+
+        Ok(conn)
     }
 }
 
 #[async_trait(?Send)]
 impl<T: DBHandle<DB = Database>> RouteAPI for Engine<T> {
     async fn create_route(&self, origin: Place, destination: Place) -> Result<Route, Error> {
-        let id = "".to_string();
-        Ok(Route {
-            id,
-            origin,
-            destination,
-            distance: 0.0,
-        })
+        Ok(Route::new(origin, destination))
     }
 
     async fn find_route(&self, id: String) -> Result<Route, Error> {
@@ -49,13 +42,10 @@ impl<T: DBHandle<DB = Database>> RouteAPI for Engine<T> {
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT data FROM routes WHERE id = $1").bind(&id))
-            .await
-            .map_err(|err| error::database_error(err))?;
+            .await?;
 
         if let Some(result) = maybe_result {
-            let Json(route) = result
-                .try_get("data")
-                .map_err(|err| error::database_error(err))?;
+            let Json(route) = result.try_get("data")?;
 
             return Ok(route);
         }
@@ -71,13 +61,10 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
-            .await
-            .map_err(|err| error::database_error(err))?;
+            .await?;
 
         if let Some(result) = maybe_result {
-            let Json(trip) = result
-                .try_get("data")
-                .map_err(|err| error::database_error(err))?;
+            let Json(trip) = result.try_get("data")?;
             return Ok(trip);
         }
 
@@ -89,12 +76,10 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
 
         let maybe_result = conn
             .fetch_optional(sqlx::query("SELECT id FROM routes WHERE id = $1").bind(&route_id))
-            .await
-            .map_err(|err| error::database_error(err))?;
+            .await?;
 
         if let Some(_) = maybe_result {
-            let trip_id = "".to_string();
-            let trip = Trip::new(trip_id, route_id, passenger_id);
+            let trip = Trip::new(route_id, passenger_id);
 
             conn.execute(
                 sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
@@ -102,8 +87,7 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                     .bind(&trip.status_string())
                     .bind(Json(&trip)),
             )
-            .await
-            .map_err(|err| error::database_error(err))?;
+            .await?;
 
             return Ok(trip);
         }
@@ -121,13 +105,10 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                             sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE")
                                 .bind(&id),
                         )
-                        .await
-                        .map_err(|err| error::database_error(err))?;
+                        .await?;
 
                     if let Some(result) = maybe_result {
-                        let Json::<Trip>(mut trip) = result
-                            .try_get("data")
-                            .map_err(|err| error::database_error(err))?;
+                        let Json::<Trip>(mut trip) = result.try_get("data")?;
                         trip.expand_search()?;
 
                         tx.execute(
@@ -135,8 +116,7 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                                 .bind(&id)
                                 .bind(Json(&trip)),
                         )
-                        .await
-                        .map_err(|err| error::database_error(err))?;
+                        .await?;
 
                         return Ok(trip);
                     }
@@ -144,11 +124,7 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                     Err(invalid_input_error())
                 })
             })
-            .await
-            .map_err(|err| match err {
-                TransactionError::ApplicationError(err) => err,
-                TransactionError::DBError(err) => error::database_error(err),
-            })?;
+            .await?;
 
         Ok(trip)
     }
@@ -160,18 +136,10 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
             sqlx::query("SELECT id, driver_id, fare FROM bids WHERE trip_id = $1").bind(&id),
         );
 
-        while let Some(row) = results
-            .try_next()
-            .await
-            .map_err(|err| error::database_error(err))?
-        {
+        while let Some(row) = results.try_next().await? {
             let trip_id = id.clone();
-            let bid_id: String = row
-                .try_get("id")
-                .map_err(|err| error::database_error(err))?;
-            let driver_id: String = row
-                .try_get("driver_id")
-                .map_err(|err| error::database_error(err))?;
+            let bid_id: String = row.try_get("id")?;
+            let driver_id: String = row.try_get("driver_id")?;
 
             let maybe_trip: Option<Trip> = self
                 .db_handle
@@ -182,11 +150,8 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                                 sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE")
                                     .bind(&driver_id),
                             )
-                            .await
-                            .map_err(|err| error::database_error(err))?;
-                        let Json::<Driver>(mut driver) = driver_result
-                            .try_get("data")
-                            .map_err(|err| error::database_error(err))?;
+                            .await?;
+                        let Json::<Driver>(mut driver) = driver_result.try_get("data")?;
 
                         if !driver.is_available() {
                             return Ok(None);
@@ -200,19 +165,15 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                                 .bind(&driver.status_string())
                                 .bind(Json(&driver)),
                         )
-                        .await
-                        .map_err(|err| error::database_error(err))?;
+                        .await?;
 
                         let trip_result = tx
                             .fetch_one(
                                 sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE")
                                     .bind(&trip_id),
                             )
-                            .await
-                            .map_err(|err| error::database_error(err))?;
-                        let Json::<Trip>(mut trip) = trip_result
-                            .try_get("data")
-                            .map_err(|err| error::database_error(err))?;
+                            .await?;
+                        let Json::<Trip>(mut trip) = trip_result.try_get("data")?;
 
                         trip.select_bid(bid_id)?;
 
@@ -222,17 +183,12 @@ impl<T: DBHandle<DB = Database>> TripAPI for Engine<T> {
                                 .bind(&trip.status_string())
                                 .bind(Json(&trip)),
                         )
-                        .await
-                        .map_err(|err| error::database_error(err))?;
+                        .await?;
 
                         Ok(Some(trip))
                     })
                 })
-                .await
-                .map_err(|err| match err {
-                    TransactionError::ApplicationError(err) => err,
-                    TransactionError::DBError(err) => error::database_error(err),
-                })?;
+                .await?;
 
             if maybe_trip.is_some() {
                 return Ok(maybe_trip);
@@ -263,5 +219,5 @@ fn new_engine() {
     ))
     .unwrap();
 
-    block_on(Engine::new(pg_store));
+    Engine::new(pg_store);
 }

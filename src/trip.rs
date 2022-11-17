@@ -1,8 +1,10 @@
 use std::ops::Add;
 
-use crate::error::{invalid_state_error, Error};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::error::{invalid_state_error, Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct Trip {
@@ -42,14 +44,14 @@ pub enum PenaltyBearer {
 }
 
 impl Trip {
-    pub fn new(id: String, route_id: String, passenger_id: String) -> Self {
+    pub fn new(route_id: String, passenger_id: String) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
             radius: 1000.0,
         };
 
         Self {
-            id,
+            id: Uuid::new_v4().to_string(),
             status,
             route_id,
             passenger_id,
