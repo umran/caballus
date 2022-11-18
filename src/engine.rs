@@ -5,11 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     api::{RouteAPI, TripAPI, API},
-    bid::Bid,
-    driver::Driver,
+    entities::{Bid, Driver, Place, Route, Trip},
     error::{self, invalid_input_error, Error},
-    route::{Place, Route},
-    trip::Trip,
 };
 
 type Database = Postgres;
@@ -151,7 +148,7 @@ impl TripAPI for Engine {
             let Json::<Driver>(mut driver) = driver_result.try_get("data")?;
 
             if !driver.is_available() {
-                return Ok(None);
+                continue;
             }
 
             driver.assign_trip(trip_id.clone())?;

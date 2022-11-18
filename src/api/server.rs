@@ -9,34 +9,33 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::engine::Engine;
-use crate::{api::API, error::Error, route::Route};
-use crate::{db::PgPool, route::Place};
+use crate::{
+    api::API,
+    entities::{Place, Route},
+    error::Error,
+};
 
-pub async fn start() {
+use super::interface::DynAPI;
+
+pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
     tracing_subscriber::fmt::init();
 
-    // set up API engine
-    let PgPool(pool) = PgPool::new("postgresql://caballus:caballus@localhost:5432/caballus", 5)
-        .await
-        .unwrap();
-
-    let api_engine = Arc::new(Engine::new(pool).await.unwrap()) as State;
+    let api = Arc::new(api) as DynAPI;
 
     let app = Router::new()
         .route("/", get(root))
         .route("/routes/:id", get(find_route))
-        .layer(Extension(api_engine));
+        .layer(Extension(api));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+
     tracing::info!("listening on {}", addr);
+
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
         .unwrap();
 }
-
-type State = Arc<dyn API + Send + Sync>;
 
 #[derive(Serialize, Deserialize)]
 struct CreateRouteParams {
@@ -44,26 +43,24 @@ struct CreateRouteParams {
     destination: Place,
 }
 
-async fn root(Extension(state): Extension<State>) -> &'static str {
+async fn root() -> &'static str {
     "Hello, World!"
 }
 
 async fn create_route(
-    Extension(state): Extension<State>,
+    Extension(api): Extension<DynAPI>,
     Json(params): Json<CreateRouteParams>,
 ) -> Result<Json<Route>, Error> {
-    let route = state
-        .create_route(params.origin, params.destination)
-        .await?;
+    let route = api.create_route(params.origin, params.destination).await?;
 
     Ok(route.into())
 }
 
 async fn find_route(
-    Extension(state): Extension<State>,
+    Extension(api): Extension<DynAPI>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Route>, Error> {
-    let route = state.find_route(id).await?;
+    let route = api.find_route(id).await?;
 
     Ok(route.into())
 }
