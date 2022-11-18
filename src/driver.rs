@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{self, Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct Driver {
-    pub id: String,
+    pub id: Uuid,
     pub status: Status,
-    pub active_vehicle_id: Option<String>,
-    pub active_trip_id: Option<String>,
+    pub active_vehicle_id: Option<Uuid>,
+    pub active_trip_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -31,7 +32,7 @@ impl Driver {
         }
     }
 
-    pub fn assign_trip(&mut self, trip_id: String) -> Result<(), Error> {
+    pub fn assign_trip(&mut self, trip_id: Uuid) -> Result<(), Error> {
         match self.status {
             Status::Available => {
                 self.active_trip_id = Some(trip_id);

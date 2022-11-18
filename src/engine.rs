@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
+use uuid::Uuid;
 
 use crate::{
     api::{RouteAPI, TripAPI, API},
@@ -39,7 +40,7 @@ impl RouteAPI for Engine {
         Ok(Route::new(origin, destination))
     }
 
-    async fn find_route(&self, id: String) -> Result<Route, Error> {
+    async fn find_route(&self, id: Uuid) -> Result<Route, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -58,7 +59,7 @@ impl RouteAPI for Engine {
 
 #[async_trait]
 impl TripAPI for Engine {
-    async fn find_trip(&self, id: String) -> Result<Trip, Error> {
+    async fn find_trip(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -73,7 +74,7 @@ impl TripAPI for Engine {
         Err(error::invalid_input_error())
     }
 
-    async fn create_trip(&self, route_id: String, passenger_id: String) -> Result<Trip, Error> {
+    async fn create_trip(&self, route_id: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -97,7 +98,7 @@ impl TripAPI for Engine {
         Err(error::invalid_input_error())
     }
 
-    async fn expand_search(&self, id: String) -> Result<Trip, Error> {
+    async fn expand_search(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
@@ -126,7 +127,7 @@ impl TripAPI for Engine {
         Err(invalid_input_error())
     }
 
-    async fn evaluate_bids(&self, id: String) -> Result<Option<Trip>, Error> {
+    async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let mut results = conn.fetch(
@@ -135,8 +136,8 @@ impl TripAPI for Engine {
 
         while let Some(row) = results.try_next().await? {
             let trip_id = id.clone();
-            let bid_id: String = row.try_get("id")?;
-            let driver_id: String = row.try_get("driver_id")?;
+            let bid_id: Uuid = row.try_get("id")?;
+            let driver_id: Uuid = row.try_get("driver_id")?;
 
             let mut conn = self.pool.acquire().await?;
             let mut tx = conn.begin().await?;

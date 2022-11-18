@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::engine::Engine;
 use crate::{api::API, error::Error, route::Route};
@@ -60,7 +61,7 @@ async fn create_route(
 
 async fn find_route(
     Extension(state): Extension<State>,
-    Path(id): Path<String>,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<Route>, Error> {
     let route = state.find_route(id).await?;
 

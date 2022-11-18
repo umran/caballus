@@ -8,11 +8,11 @@ use crate::error::{invalid_state_error, Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct Trip {
-    pub id: String,
+    pub id: Uuid,
     pub status: Status,
-    pub route_id: String,
-    pub passenger_id: String,
-    pub selected_bid_id: Option<String>,
+    pub route_id: Uuid,
+    pub passenger_id: Uuid,
+    pub selected_bid_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,14 +44,14 @@ pub enum PenaltyBearer {
 }
 
 impl Trip {
-    pub fn new(route_id: String, passenger_id: String) -> Self {
+    pub fn new(route_id: Uuid, passenger_id: Uuid) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
             radius: 1000.0,
         };
 
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: Uuid::new_v4(),
             status,
             route_id,
             passenger_id,
@@ -103,7 +103,7 @@ impl Trip {
         }
     }
 
-    pub fn select_bid(&mut self, bid_id: String) -> Result<(), Error> {
+    pub fn select_bid(&mut self, bid_id: Uuid) -> Result<(), Error> {
         match &self.status {
             Status::Searching {
                 deadline: _,
