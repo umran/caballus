@@ -17,7 +17,7 @@ pub trait TripAPI {
     async fn create_trip(&self, route_id: Uuid, passenger_id: Uuid) -> Result<Trip, Error>;
     async fn expand_search(&self, id: Uuid) -> Result<Trip, Error>;
     async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error>;
-    async fn submit_bid(&self, bid: Bid) -> Result<(), Error>;
+    async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error>;
 }
 
 pub trait API: RouteAPI + TripAPI {}

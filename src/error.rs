@@ -45,7 +45,7 @@ pub fn invalid_input_error() -> Error {
     }
 }
 
-pub fn database_error<T: Debug>(err: T) -> Error {
+pub fn database_error<T: Debug>(_: T) -> Error {
     Error {
         code: 1,
         message: "database error".to_string(),

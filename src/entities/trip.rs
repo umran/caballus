@@ -86,6 +86,16 @@ impl Trip {
         }
     }
 
+    pub fn search_deadline(&self) -> Result<DateTime<Utc>, Error> {
+        match &self.status {
+            Status::Searching {
+                deadline,
+                radius: _,
+            } => Ok(*deadline),
+            _ => Err(invalid_state_error()),
+        }
+    }
+
     pub fn expand_search(&mut self) -> Result<(), Error> {
         match &self.status {
             Status::Searching {

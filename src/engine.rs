@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::Utc;
 use futures::TryStreamExt;
 use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
 use uuid::Uuid;
@@ -6,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     api::{RouteAPI, TripAPI, API},
     entities::{Bid, Driver, Place, Route, Trip},
-    error::{self, invalid_input_error, Error},
+    error::{invalid_input_error, Error},
 };
 
 type Database = Postgres;
@@ -44,13 +45,10 @@ impl RouteAPI for Engine {
             .fetch_optional(sqlx::query("SELECT data FROM routes WHERE id = $1").bind(&id))
             .await?;
 
-        if let Some(result) = maybe_result {
-            let Json(route) = result.try_get("data")?;
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let Json(route) = result.try_get("data")?;
 
-            return Ok(route);
-        }
-
-        Err(error::invalid_input_error())
+        Ok(route)
     }
 }
 
@@ -63,12 +61,10 @@ impl TripAPI for Engine {
             .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
             .await?;
 
-        if let Some(result) = maybe_result {
-            let Json(trip) = result.try_get("data")?;
-            return Ok(trip);
-        }
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let Json(trip) = result.try_get("data")?;
 
-        Err(error::invalid_input_error())
+        Ok(trip)
     }
 
     async fn create_trip(&self, route_id: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
@@ -78,21 +74,21 @@ impl TripAPI for Engine {
             .fetch_optional(sqlx::query("SELECT id FROM routes WHERE id = $1").bind(&route_id))
             .await?;
 
-        if let Some(_) = maybe_result {
-            let trip = Trip::new(route_id, passenger_id);
+        maybe_result.ok_or_else(|| invalid_input_error())?;
 
-            conn.execute(
-                sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
-                    .bind(&trip.id)
-                    .bind(&trip.status_string())
-                    .bind(Json(&trip)),
-            )
-            .await?;
+        // TODO: ensure passenger exists and does not have another active trip while trip is created
 
-            return Ok(trip);
-        }
+        let trip = Trip::new(route_id, passenger_id);
 
-        Err(error::invalid_input_error())
+        conn.execute(
+            sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
+                .bind(&trip.id)
+                .bind(&trip.status_string())
+                .bind(Json(&trip)),
+        )
+        .await?;
+
+        Ok(trip)
     }
 
     async fn expand_search(&self, id: Uuid) -> Result<Trip, Error> {
@@ -105,23 +101,21 @@ impl TripAPI for Engine {
             )
             .await?;
 
-        if let Some(result) = maybe_result {
-            let Json::<Trip>(mut trip) = result.try_get("data")?;
-            trip.expand_search()?;
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
 
-            tx.execute(
-                sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
-                    .bind(&id)
-                    .bind(Json(&trip)),
-            )
-            .await?;
+        let Json::<Trip>(mut trip) = result.try_get("data")?;
+        trip.expand_search()?;
 
-            tx.commit().await?;
+        tx.execute(
+            sqlx::query("UPDATE trips SET data = $2 WHERE id = $1")
+                .bind(&id)
+                .bind(Json(&trip)),
+        )
+        .await?;
 
-            return Ok(trip);
-        }
+        tx.commit().await?;
 
-        Err(invalid_input_error())
+        Ok(trip)
     }
 
     async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error> {
@@ -139,12 +133,18 @@ impl TripAPI for Engine {
             let mut conn = self.pool.acquire().await?;
             let mut tx = conn.begin().await?;
 
-            let driver_result = tx
-                .fetch_one(
+            let maybe_driver_result = tx
+                .fetch_optional(
                     sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE")
                         .bind(&driver_id),
                 )
                 .await?;
+
+            if maybe_driver_result.is_none() {
+                continue;
+            }
+
+            let driver_result = maybe_driver_result.unwrap();
             let Json::<Driver>(mut driver) = driver_result.try_get("data")?;
 
             if !driver.is_available() {
@@ -186,11 +186,52 @@ impl TripAPI for Engine {
         Ok(None)
     }
 
-    async fn submit_bid(&self, bid: Bid) -> Result<(), Error> {
-        Err(Error {
-            code: 0,
-            message: "unimplemented".to_string(),
-        })
+    async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error> {
+        let mut conn = self.pool.acquire().await?;
+
+        // perform a weak (non-consistent) check to ensure bid submitted before deadline
+        let maybe_result = conn
+            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&trip_id))
+            .await?;
+
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let Json(trip): Json<Trip> = result.try_get("data")?;
+
+        if Utc::now() > trip.search_deadline()? {
+            return Err(invalid_input_error());
+        }
+
+        // make sure driver exists and is AVAILABLE while bid is created
+        let mut tx = conn.begin().await?;
+
+        let maybe_driver_result = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&driver_id),
+            )
+            .await?;
+        let driver_result = maybe_driver_result.ok_or_else(|| invalid_input_error())?;
+        let Json(driver): Json<Driver> = driver_result.try_get("data")?;
+
+        if !driver.is_available() {
+            return Err(invalid_input_error());
+        }
+
+        let bid = Bid::new(trip_id, driver_id, amount);
+
+        tx.execute(
+            sqlx::query(
+                "INSERT INTO bids (id, trip_id, driver_id, amount) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(&bid.id)
+            .bind(&bid.trip_id)
+            .bind(&bid.driver_id)
+            .bind(&bid.amount),
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(bid)
     }
 }
 
