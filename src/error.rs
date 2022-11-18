@@ -3,7 +3,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use std::fmt::Debug;
-use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Error {
@@ -46,7 +45,6 @@ pub fn invalid_input_error() -> Error {
     }
 }
 
-#[instrument]
 pub fn database_error<T: Debug>(err: T) -> Error {
     Error {
         code: 1,
