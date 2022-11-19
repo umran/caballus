@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::{
     api::{RouteAPI, TripAPI, API},
-    entities::{Bid, Driver, Place, Route, Trip},
-    error::{invalid_input_error, Error},
+    entities::{Bid, Driver, Route, Trip},
+    error::{invalid_input_error, unimplemented_error, Error},
 };
 
 type Database = Postgres;
@@ -34,8 +34,8 @@ impl Engine {
 
 #[async_trait]
 impl RouteAPI for Engine {
-    async fn create_route(&self, origin: Place, destination: Place) -> Result<Route, Error> {
-        Ok(Route::new(origin, destination))
+    async fn create_route(&self, origin_id: Uuid, destination_id: Uuid) -> Result<Route, Error> {
+        Err(unimplemented_error())
     }
 
     async fn find_route(&self, id: Uuid) -> Result<Route, Error> {

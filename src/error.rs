@@ -51,3 +51,10 @@ pub fn database_error<T: Debug>(_: T) -> Error {
         message: "database error".to_string(),
     }
 }
+
+pub fn unimplemented_error() -> Error {
+    Error {
+        code: 0,
+        message: "unimplemented error".to_string(),
+    }
+}

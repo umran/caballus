@@ -2,23 +2,21 @@ use axum::extract::{Extension, Json, Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    api::interface::DynAPI,
-    entities::{Place, Route},
-    error::Error,
-};
+use crate::{api::interface::DynAPI, entities::Route, error::Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateRouteParams {
-    origin: Place,
-    destination: Place,
+    origin_id: Uuid,
+    destination_id: Uuid,
 }
 
 pub async fn create(
     Extension(api): Extension<DynAPI>,
     Json(params): Json<CreateRouteParams>,
 ) -> Result<Json<Route>, Error> {
-    let route = api.create_route(params.origin, params.destination).await?;
+    let route = api
+        .create_route(params.origin_id, params.destination_id)
+        .await?;
 
     Ok(route.into())
 }

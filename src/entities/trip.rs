@@ -16,6 +16,7 @@ pub struct Trip {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
     Searching {
         deadline: DateTime<Utc>,
@@ -38,6 +39,7 @@ pub enum Status {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PenaltyBearer {
     Passenger,
     Driver,

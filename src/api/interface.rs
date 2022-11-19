@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::entities::{Bid, Place, Route, Trip};
+use crate::entities::{Bid, Route, Trip};
 use crate::error::Error;
 
 #[async_trait]
 pub trait RouteAPI {
     async fn find_route(&self, id: Uuid) -> Result<Route, Error>;
-    async fn create_route(&self, origin: Place, destination: Place) -> Result<Route, Error>;
+    async fn create_route(&self, origin_id: Uuid, destination_id: Uuid) -> Result<Route, Error>;
 }
 
 #[async_trait]

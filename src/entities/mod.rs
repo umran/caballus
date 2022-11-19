@@ -1,11 +1,11 @@
 mod bid;
 mod driver;
-mod place;
+mod location;
 mod route;
 mod trip;
 
 pub use bid::Bid;
 pub use driver::Driver;
-pub use place::Place;
+pub use location::{Coordinates, Location, LocationToken};
 pub use route::Route;
 pub use trip::Trip;

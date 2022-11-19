@@ -12,6 +12,7 @@ pub struct Driver {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
     Assigned,
     Available,
