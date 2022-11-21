@@ -37,11 +37,8 @@ pub async fn list_place_suggestions(
         .send()
         .await?;
 
-    if res.status() == reqwest::StatusCode::BAD_GATEWAY {
-        return Err(upstream_error());
-    }
-
     let status_code = res.status().as_u16();
+
     if status_code >= 500 {
         return Err(upstream_error());
     } else if status_code != 200 {
