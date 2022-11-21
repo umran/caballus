@@ -1,18 +1,43 @@
-use axum::extract::{Json, Query};
+use axum::extract::{Json, Path, Query};
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::Coordinates,
     error::Error,
-    external::google_maps::{list_place_suggestions, PlaceSuggestions},
+    external::google_maps::{find_place, find_place_suggestions, Place, PlaceSuggestions},
 };
 
-pub async fn list_suggestions(
-    Query(input): Query<String>,
-    Query(location): Query<Coordinates>,
-    Query(radius): Query<f64>,
-    Query(session_token): Query<String>,
+#[derive(Serialize, Deserialize)]
+pub struct FindSuggestionsParams {
+    input: String,
+    location: String,
+    radius: f64,
+    session_token: String,
+}
+
+pub async fn find_suggestions(
+    Query(params): Query<FindSuggestionsParams>,
 ) -> Result<Json<PlaceSuggestions>, Error> {
-    let data = list_place_suggestions(input, location, radius, session_token).await?;
+    let data = find_place_suggestions(
+        params.input,
+        params.location.try_into()?,
+        params.radius,
+        params.session_token,
+    )
+    .await?;
+
+    Ok(data.into())
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FindParams {
+    session_token: String,
+}
+
+pub async fn find(
+    Path(id): Path<String>,
+    Query(params): Query<FindParams>,
+) -> Result<Json<Place>, Error> {
+    let data = find_place(id, params.session_token).await?;
 
     Ok(data.into())
 }

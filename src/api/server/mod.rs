@@ -22,8 +22,9 @@ pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
         .route("/routes/:id", get(routes::find))
         .route(
             "/google_places/suggestions",
-            get(google_places::list_suggestions),
+            get(google_places::find_suggestions),
         )
+        .route("/google_places/:id", get(google_places::find))
         .layer(Extension(api));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));

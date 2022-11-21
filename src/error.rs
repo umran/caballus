@@ -37,6 +37,7 @@ impl IntoResponse for Error {
         };
 
         let body = Json(json!({
+            "code": self.code,
             "error": error_message,
         }));
 
@@ -58,10 +59,10 @@ pub fn invalid_input_error() -> Error {
     }
 }
 
-pub fn database_error<T: Debug>(_: T) -> Error {
+pub fn unimplemented_error() -> Error {
     Error {
-        code: 2,
-        message: "database error".into(),
+        code: 0,
+        message: "unimplemented error".into(),
     }
 }
 
@@ -69,6 +70,13 @@ pub fn env_var_error(_: env::VarError) -> Error {
     Error {
         code: 1,
         message: "environment variable error".into(),
+    }
+}
+
+pub fn database_error<T: Debug>(_: T) -> Error {
+    Error {
+        code: 2,
+        message: "database error".into(),
     }
 }
 
@@ -86,9 +94,9 @@ pub fn upstream_error() -> Error {
     }
 }
 
-pub fn unimplemented_error() -> Error {
+pub fn unexpected_error() -> Error {
     Error {
-        code: 0,
-        message: "unimplemented error".into(),
+        code: 5,
+        message: "unexpected error".into(),
     }
 }

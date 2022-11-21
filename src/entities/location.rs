@@ -27,13 +27,13 @@ pub struct Location {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Coordinates {
-    pub latitude: f64,
-    pub longitude: f64,
+    pub lat: f64,
+    pub lng: f64,
 }
 
 impl Into<String> for Coordinates {
     fn into(self) -> String {
-        format!("{}, {}", self.latitude, self.longitude)
+        format!("{}, {}", self.lat, self.lng)
     }
 }
 
@@ -52,9 +52,6 @@ impl TryFrom<String> for Coordinates {
         let lat = lat.parse::<f64>().map_err(|_| invalid_input_error())?;
         let lng = lng.parse::<f64>().map_err(|_| invalid_input_error())?;
 
-        Ok(Coordinates {
-            latitude: lat,
-            longitude: lng,
-        })
+        Ok(Coordinates { lat, lng })
     }
 }
