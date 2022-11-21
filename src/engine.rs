@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::TryStreamExt;
+use serde_json::json;
 use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::{
-    api::{RouteAPI, TripAPI, API},
-    entities::{Bid, Driver, Route, Trip},
+    api::{GeoAPI, RouteAPI, TripAPI, API},
+    entities::{Bid, Driver, LocationSource, LocationToken, Route, Trip},
     error::{invalid_input_error, unimplemented_error, Error},
 };
 
@@ -33,9 +34,25 @@ impl Engine {
 }
 
 #[async_trait]
+impl GeoAPI for Engine {
+    async fn create_location_token(&self, source: LocationSource) -> Result<LocationToken, Error> {
+        Err(unimplemented_error())
+    }
+
+    async fn find_location_token(&self, id: Uuid) -> Result<LocationToken, Error> {
+        Err(unimplemented_error())
+    }
+}
+
+#[async_trait]
 impl RouteAPI for Engine {
     async fn create_route(&self, origin_id: Uuid, destination_id: Uuid) -> Result<Route, Error> {
-        Err(unimplemented_error())
+        let origin = self.find_location_token(origin_id).await?;
+        let destination = self.find_location_token(destination_id).await?;
+
+        let route = Route::new(origin.location, destination.location, json!(""));
+
+        Ok(route)
     }
 
     async fn find_route(&self, id: Uuid) -> Result<Route, Error> {

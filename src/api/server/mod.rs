@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 
-use crate::api::server::handlers::route;
+use crate::api::server::handlers::{google_places, routes};
 use crate::api::{interface::DynAPI, API};
 
 pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
@@ -18,8 +18,12 @@ pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
     let api = Arc::new(api) as DynAPI;
 
     let app = Router::new()
-        .route("/routes", post(route::create))
-        .route("/routes/:id", get(route::find))
+        .route("/routes", post(routes::create))
+        .route("/routes/:id", get(routes::find))
+        .route(
+            "/google_places/suggestions",
+            get(google_places::list_suggestions),
+        )
         .layer(Extension(api));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));

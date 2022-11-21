@@ -2,8 +2,14 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::entities::{Bid, Route, Trip};
+use crate::entities::{Bid, LocationSource, LocationToken, Route, Trip};
 use crate::error::Error;
+
+#[async_trait]
+pub trait GeoAPI {
+    async fn find_location_token(&self, id: Uuid) -> Result<LocationToken, Error>;
+    async fn create_location_token(&self, source: LocationSource) -> Result<LocationToken, Error>;
+}
 
 #[async_trait]
 pub trait RouteAPI {
@@ -20,6 +26,6 @@ pub trait TripAPI {
     async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error>;
 }
 
-pub trait API: RouteAPI + TripAPI {}
+pub trait API: GeoAPI + RouteAPI + TripAPI {}
 
 pub type DynAPI = Arc<dyn API + Send + Sync>;
