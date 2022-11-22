@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::entities::{Bid, LocationSource, LocationToken, Route, Trip};
@@ -27,5 +26,3 @@ pub trait TripAPI {
 }
 
 pub trait API: GeoAPI + RouteAPI + TripAPI {}
-
-pub type DynAPI = Arc<dyn API + Send + Sync>;

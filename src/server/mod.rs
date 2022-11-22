@@ -9,8 +9,10 @@ use axum::{
     Router,
 };
 
-use crate::api::server::handlers::{google_places, routes};
-use crate::api::{interface::DynAPI, API};
+use crate::api::API;
+use crate::server::handlers::{google_places, routes};
+
+type DynAPI = Arc<dyn API + Send + Sync>;
 
 pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
     tracing_subscriber::fmt::init();

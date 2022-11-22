@@ -1,8 +1,8 @@
 use dotenv::dotenv;
 
-use caballus::api::serve;
 use caballus::db::PgPool;
 use caballus::engine::Engine;
+use caballus::server::serve;
 
 #[tokio::main]
 async fn main() {

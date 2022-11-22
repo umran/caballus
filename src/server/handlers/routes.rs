@@ -2,7 +2,8 @@ use axum::extract::{Extension, Json, Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{api::interface::DynAPI, entities::Route, error::Error};
+use crate::server::DynAPI;
+use crate::{entities::Route, error::Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateRouteParams {
