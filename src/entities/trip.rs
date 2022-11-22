@@ -4,13 +4,14 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::entities::Route;
 use crate::error::{invalid_state_error, Error};
 
 #[derive(Serialize, Deserialize)]
 pub struct Trip {
     pub id: Uuid,
     pub status: Status,
-    pub route_id: Uuid,
+    pub route: Route,
     pub passenger_id: Uuid,
     pub selected_bid_id: Option<Uuid>,
 }
@@ -46,7 +47,7 @@ pub enum PenaltyBearer {
 }
 
 impl Trip {
-    pub fn new(route_id: Uuid, passenger_id: Uuid) -> Self {
+    pub fn new(passenger_id: Uuid, route: Route) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
             radius: 1000.0,
@@ -55,7 +56,7 @@ impl Trip {
         Self {
             id: Uuid::new_v4(),
             status,
-            route_id,
+            route,
             passenger_id,
             selected_bid_id: None,
         }

@@ -14,13 +14,8 @@ pub enum LocationSource {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct LocationToken {
-    pub id: Uuid,
-    pub location: Location,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct Location {
+    pub token: Uuid,
     pub description: String,
     pub coordinates: Coordinates,
 }

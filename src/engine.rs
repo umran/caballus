@@ -6,8 +6,8 @@ use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::{
-    api::{GeoAPI, RouteAPI, TripAPI, API},
-    entities::{Bid, Driver, LocationSource, LocationToken, Route, Trip},
+    api::{LocationAPI, RouteAPI, TripAPI, API},
+    entities::{Bid, Driver, Location, LocationSource, Route, Trip},
     error::{invalid_input_error, unimplemented_error, Error},
 };
 
@@ -20,8 +20,15 @@ pub struct Engine {
 
 impl Engine {
     pub async fn new(pool: Pool<Database>) -> Result<Self, Error> {
-        pool.execute("CREATE TABLE IF NOT EXISTS routes (id UUID PRIMARY KEY, data jsonb)")
+        // location service
+        pool.execute("CREATE TABLE IF NOT EXISTS locations (token UUID PRIMARY KEY, data jsonb)")
             .await?;
+
+        // route service
+        pool.execute("CREATE TABLE IF NOT EXISTS routes (token UUID PRIMARY KEY, data jsonb)")
+            .await?;
+
+        // trip service
         pool.execute("CREATE TABLE IF NOT EXISTS trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
             .await?;
         pool.execute("CREATE TABLE IF NOT EXISTS drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data jsonb)")
@@ -34,32 +41,36 @@ impl Engine {
 }
 
 #[async_trait]
-impl GeoAPI for Engine {
-    async fn create_location_token(&self, source: LocationSource) -> Result<LocationToken, Error> {
+impl LocationAPI for Engine {
+    async fn create_location(&self, source: LocationSource) -> Result<Location, Error> {
         Err(unimplemented_error())
     }
 
-    async fn find_location_token(&self, id: Uuid) -> Result<LocationToken, Error> {
+    async fn find_location(&self, token: Uuid) -> Result<Location, Error> {
         Err(unimplemented_error())
     }
 }
 
 #[async_trait]
 impl RouteAPI for Engine {
-    async fn create_route(&self, origin_id: Uuid, destination_id: Uuid) -> Result<Route, Error> {
-        let origin = self.find_location_token(origin_id).await?;
-        let destination = self.find_location_token(destination_id).await?;
+    async fn create_route(
+        &self,
+        origin_token: Uuid,
+        destination_token: Uuid,
+    ) -> Result<Route, Error> {
+        let origin = self.find_location(origin_token).await?;
+        let destination = self.find_location(destination_token).await?;
 
-        let route = Route::new(origin.location, destination.location, json!(""));
+        let route = Route::new(origin, destination, json!(""));
 
         Ok(route)
     }
 
-    async fn find_route(&self, id: Uuid) -> Result<Route, Error> {
+    async fn find_route(&self, token: Uuid) -> Result<Route, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
-            .fetch_optional(sqlx::query("SELECT data FROM routes WHERE id = $1").bind(&id))
+            .fetch_optional(sqlx::query("SELECT data FROM routes WHERE token = $1").bind(&token))
             .await?;
 
         let result = maybe_result.ok_or_else(|| invalid_input_error())?;
@@ -84,18 +95,13 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    async fn create_trip(&self, route_id: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
+    async fn create_trip(&self, route_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
+        let route = self.find_route(route_token).await?;
+        let trip = Trip::new(passenger_id, route);
+
         let mut conn = self.pool.acquire().await?;
 
-        let maybe_result = conn
-            .fetch_optional(sqlx::query("SELECT id FROM routes WHERE id = $1").bind(&route_id))
-            .await?;
-
-        maybe_result.ok_or_else(|| invalid_input_error())?;
-
         // TODO: ensure passenger exists and does not have another active trip while trip is created
-
-        let trip = Trip::new(route_id, passenger_id);
 
         conn.execute(
             sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")

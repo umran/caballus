@@ -21,7 +21,7 @@ pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
 
     let app = Router::new()
         .route("/routes", post(routes::create))
-        .route("/routes/:id", get(routes::find))
+        .route("/routes/:token", get(routes::find))
         .route(
             "/google_places/suggestions",
             get(google_places::find_suggestions),

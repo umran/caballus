@@ -24,9 +24,9 @@ pub async fn create(
 
 pub async fn find(
     Extension(api): Extension<DynAPI>,
-    Path(id): Path<Uuid>,
+    Path(token): Path<Uuid>,
 ) -> Result<Json<Route>, Error> {
-    let route = api.find_route(id).await?;
+    let route = api.find_route(token).await?;
 
     Ok(route.into())
 }

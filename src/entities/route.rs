@@ -6,7 +6,7 @@ use crate::entities::Location;
 
 #[derive(Serialize, Deserialize)]
 pub struct Route {
-    pub id: String,
+    pub token: Uuid,
     pub origin: Location,
     pub destination: Location,
     pub directions: Value,
@@ -16,7 +16,7 @@ pub struct Route {
 impl Route {
     pub fn new(origin: Location, destination: Location, directions: Value) -> Self {
         Route {
-            id: Uuid::new_v4().to_string(),
+            token: Uuid::new_v4(),
             origin,
             destination,
             directions,
