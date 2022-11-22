@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::entities::Location;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Route {
     pub token: Uuid,
     pub origin: Location,

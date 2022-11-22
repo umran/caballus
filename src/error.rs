@@ -19,7 +19,7 @@ impl From<env::VarError> for Error {
 
 impl From<sqlx::Error> for Error {
     fn from(err: sqlx::Error) -> Self {
-        database_error(err)
+        sqlx_error(err)
     }
 }
 
@@ -45,41 +45,23 @@ impl IntoResponse for Error {
     }
 }
 
-pub fn invalid_state_error() -> Error {
-    Error {
-        code: 100,
-        message: "invalid state".into(),
-    }
-}
-
-pub fn invalid_input_error() -> Error {
-    Error {
-        code: 101,
-        message: "invalid input".into(),
-    }
-}
-
-pub fn unimplemented_error() -> Error {
-    Error {
-        code: 0,
-        message: "unimplemented error".into(),
-    }
-}
-
-pub fn env_var_error(_: env::VarError) -> Error {
+#[tracing::instrument(level = "error")]
+pub fn unexpected_error() -> Error {
     Error {
         code: 1,
-        message: "environment variable error".into(),
+        message: "unexpected error".into(),
     }
 }
 
-pub fn database_error<T: Debug>(_: T) -> Error {
+#[tracing::instrument(level = "error")]
+pub fn sqlx_error(_: sqlx::Error) -> Error {
     Error {
         code: 2,
         message: "database error".into(),
     }
 }
 
+#[tracing::instrument(level = "error")]
 pub fn reqwest_error(_: reqwest::Error) -> Error {
     Error {
         code: 3,
@@ -87,16 +69,34 @@ pub fn reqwest_error(_: reqwest::Error) -> Error {
     }
 }
 
-pub fn upstream_error() -> Error {
+#[tracing::instrument(level = "warn")]
+pub fn env_var_error(_: env::VarError) -> Error {
     Error {
         code: 4,
+        message: "environment variable error".into(),
+    }
+}
+
+#[tracing::instrument(level = "warn")]
+pub fn upstream_error() -> Error {
+    Error {
+        code: 5,
         message: "upstream error".into(),
     }
 }
 
-pub fn unexpected_error() -> Error {
+#[tracing::instrument(level = "info")]
+pub fn invalid_invocation_error() -> Error {
     Error {
-        code: 5,
-        message: "unexpected error".into(),
+        code: 100,
+        message: "invalid state".into(),
+    }
+}
+
+#[tracing::instrument(level = "info")]
+pub fn invalid_input_error() -> Error {
+    Error {
+        code: 101,
+        message: "invalid input".into(),
     }
 }

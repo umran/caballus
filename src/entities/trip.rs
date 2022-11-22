@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::Route;
-use crate::error::{invalid_state_error, Error};
+use crate::error::{invalid_invocation_error, Error};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Trip {
     pub id: Uuid,
     pub status: Status,
@@ -16,7 +16,7 @@ pub struct Trip {
     pub selected_bid_id: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
     Searching {
@@ -39,7 +39,7 @@ pub enum Status {
     Completed,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PenaltyBearer {
     Passenger,
@@ -95,7 +95,7 @@ impl Trip {
                 deadline,
                 radius: _,
             } => Ok(*deadline),
-            _ => Err(invalid_state_error()),
+            _ => Err(invalid_invocation_error()),
         }
     }
 
@@ -112,7 +112,7 @@ impl Trip {
 
                 Ok(())
             }
-            _ => Err(invalid_state_error()),
+            _ => Err(invalid_invocation_error()),
         }
     }
 
@@ -130,7 +130,7 @@ impl Trip {
 
                 Ok(())
             }
-            _ => Err(invalid_state_error()),
+            _ => Err(invalid_invocation_error()),
         }
     }
 
@@ -174,7 +174,7 @@ impl Trip {
                     Ok(Some(PenaltyBearer::Driver))
                 }
             },
-            _ => Err(invalid_state_error()),
+            _ => Err(invalid_invocation_error()),
         }
     }
 }

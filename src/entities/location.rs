@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::error::{invalid_input_error, Error};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LocationSource {
     GooglePlaces {
@@ -13,14 +13,24 @@ pub enum LocationSource {
     Coordinates(Coordinates),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Location {
     pub token: Uuid,
-    pub description: String,
     pub coordinates: Coordinates,
+    pub description: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+impl Location {
+    pub fn new(coordinates: Coordinates, description: String) -> Self {
+        Self {
+            token: Uuid::new_v4(),
+            coordinates,
+            description,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coordinates {
     pub lat: f64,
     pub lng: f64,

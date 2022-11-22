@@ -8,7 +8,8 @@ use uuid::Uuid;
 use crate::{
     api::{LocationAPI, RouteAPI, TripAPI, API},
     entities::{Bid, Driver, Location, LocationSource, Route, Trip},
-    error::{invalid_input_error, unimplemented_error, Error},
+    error::{invalid_input_error, Error},
+    external::google_maps,
 };
 
 type Database = Postgres;
@@ -19,6 +20,7 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[tracing::instrument]
     pub async fn new(pool: Pool<Database>) -> Result<Self, Error> {
         // location service
         pool.execute("CREATE TABLE IF NOT EXISTS locations (token UUID PRIMARY KEY, data jsonb)")
@@ -42,17 +44,49 @@ impl Engine {
 
 #[async_trait]
 impl LocationAPI for Engine {
+    #[tracing::instrument]
     async fn create_location(&self, source: LocationSource) -> Result<Location, Error> {
-        Err(unimplemented_error())
+        let location: Location = match source {
+            LocationSource::Coordinates(coordinates) => Location::new(coordinates, "".into()),
+            LocationSource::GooglePlaces {
+                place_id,
+                session_token,
+            } => {
+                let place = google_maps::find_place(place_id, session_token).await?;
+                Location::new(place.geometry.location, place.formatted_address)
+            }
+        };
+
+        let mut conn = self.pool.acquire().await?;
+
+        conn.execute(
+            sqlx::query("INSERT INTO locations (token, data) VALUES ($1, $2)")
+                .bind(&location.token)
+                .bind(Json(&location)),
+        )
+        .await?;
+
+        Ok(location)
     }
 
+    #[tracing::instrument]
     async fn find_location(&self, token: Uuid) -> Result<Location, Error> {
-        Err(unimplemented_error())
+        let mut conn = self.pool.acquire().await?;
+
+        let maybe_result = conn
+            .fetch_optional(sqlx::query("SELECT data FROM locations WHERE token = $1").bind(&token))
+            .await?;
+
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let Json(location) = result.try_get("data")?;
+
+        Ok(location)
     }
 }
 
 #[async_trait]
 impl RouteAPI for Engine {
+    #[tracing::instrument]
     async fn create_route(
         &self,
         origin_token: Uuid,
@@ -63,9 +97,18 @@ impl RouteAPI for Engine {
 
         let route = Route::new(origin, destination, json!(""));
 
+        let mut conn = self.pool.acquire().await?;
+        conn.execute(
+            sqlx::query("INSERT INTO routes (token, data) VALUES ($1, $2)")
+                .bind(&route.token)
+                .bind(Json(&route)),
+        )
+        .await?;
+
         Ok(route)
     }
 
+    #[tracing::instrument]
     async fn find_route(&self, token: Uuid) -> Result<Route, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -82,6 +125,7 @@ impl RouteAPI for Engine {
 
 #[async_trait]
 impl TripAPI for Engine {
+    #[tracing::instrument]
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -95,6 +139,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
+    #[tracing::instrument]
     async fn create_trip(&self, route_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
         let route = self.find_route(route_token).await?;
         let trip = Trip::new(passenger_id, route);
@@ -114,6 +159,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
+    #[tracing::instrument]
     async fn expand_search(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
@@ -141,6 +187,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
+    #[tracing::instrument]
     async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -209,6 +256,7 @@ impl TripAPI for Engine {
         Ok(None)
     }
 
+    #[tracing::instrument]
     async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error> {
         let mut conn = self.pool.acquire().await?;
 

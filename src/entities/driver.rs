@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{self, Error};
+use crate::error::{invalid_invocation_error, Error};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Driver {
     pub id: Uuid,
     pub status: Status,
@@ -11,7 +11,7 @@ pub struct Driver {
     pub active_trip_id: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
     Assigned,
@@ -39,7 +39,7 @@ impl Driver {
                 self.active_trip_id = Some(trip_id);
                 Ok(())
             }
-            _ => Err(error::invalid_state_error()),
+            _ => Err(invalid_invocation_error()),
         }
     }
 }

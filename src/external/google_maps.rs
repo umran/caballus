@@ -6,27 +6,27 @@ use crate::{
     error::{invalid_input_error, unexpected_error, upstream_error, Error},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Place {
-    place_id: String,
-    formatted_address: String,
-    geometry: Geometry,
+    pub place_id: String,
+    pub formatted_address: String,
+    pub geometry: Geometry,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Geometry {
-    location: Coordinates,
+    pub location: Coordinates,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaceSuggestion {
-    place_id: String,
-    description: String,
+    pub place_id: String,
+    pub description: String,
 }
 
 pub type PlaceSuggestions = Vec<PlaceSuggestion>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Response<T> {
     status: String,
     result: Option<T>,
@@ -34,6 +34,7 @@ struct Response<T> {
     predictions: Option<T>,
 }
 
+#[tracing::instrument]
 pub async fn find_place_suggestions(
     input: String,
     location: Coordinates,
@@ -73,6 +74,7 @@ pub async fn find_place_suggestions(
     Ok(data.predictions.ok_or_else(|| unexpected_error())?)
 }
 
+#[tracing::instrument]
 pub async fn find_place(id: String, session_token: String) -> Result<Place, Error> {
     let api_base = env::var("GOOGLE_MAPS_API_BASE")?;
     let url = format!("https://{}/maps/api/place/details/json", api_base);

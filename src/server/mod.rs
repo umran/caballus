@@ -15,8 +15,6 @@ use crate::server::handlers::{google_places, routes};
 type DynAPI = Arc<dyn API + Send + Sync>;
 
 pub async fn serve<T: API + Sync + Send + 'static>(api: T) {
-    tracing_subscriber::fmt::init();
-
     let api = Arc::new(api) as DynAPI;
 
     let app = Router::new()
