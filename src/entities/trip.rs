@@ -89,6 +89,7 @@ impl Trip {
         }
     }
 
+    #[tracing::instrument]
     pub fn search_deadline(&self) -> Result<DateTime<Utc>, Error> {
         match &self.status {
             Status::Searching {
@@ -99,6 +100,7 @@ impl Trip {
         }
     }
 
+    #[tracing::instrument]
     pub fn expand_search(&mut self) -> Result<(), Error> {
         match &self.status {
             Status::Searching {
@@ -116,6 +118,7 @@ impl Trip {
         }
     }
 
+    #[tracing::instrument]
     pub fn select_bid(&mut self, bid_id: Uuid) -> Result<(), Error> {
         match &self.status {
             Status::Searching {
@@ -134,6 +137,7 @@ impl Trip {
         }
     }
 
+    #[tracing::instrument]
     pub fn cancel(&mut self, is_passenger: bool) -> Result<(), Error> {
         let penalty_bearer = self.cancellation_result(is_passenger)?;
 
@@ -141,6 +145,7 @@ impl Trip {
         Ok(())
     }
 
+    #[tracing::instrument]
     fn cancellation_result(&self, is_passenger: bool) -> Result<Option<PenaltyBearer>, Error> {
         match &self.status {
             Status::Searching {

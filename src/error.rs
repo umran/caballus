@@ -45,58 +45,65 @@ impl IntoResponse for Error {
     }
 }
 
-#[tracing::instrument(level = "error")]
 pub fn unexpected_error() -> Error {
+    tracing::error!("unexpected error");
+
     Error {
         code: 1,
         message: "unexpected error".into(),
     }
 }
 
-#[tracing::instrument(level = "error")]
-pub fn sqlx_error(_: sqlx::Error) -> Error {
+pub fn sqlx_error(err: sqlx::Error) -> Error {
+    tracing::error!("sqlx error: {}", err);
+
     Error {
         code: 2,
         message: "database error".into(),
     }
 }
 
-#[tracing::instrument(level = "error")]
-pub fn reqwest_error(_: reqwest::Error) -> Error {
+pub fn reqwest_error(err: reqwest::Error) -> Error {
+    tracing::error!("reqwest error: {}", err);
+
     Error {
         code: 3,
         message: "reqwest error".into(),
     }
 }
 
-#[tracing::instrument(level = "warn")]
-pub fn env_var_error(_: env::VarError) -> Error {
+pub fn env_var_error(err: env::VarError) -> Error {
+    tracing::warn!("env var error: {}", err);
+
     Error {
         code: 4,
         message: "environment variable error".into(),
     }
 }
 
-#[tracing::instrument(level = "warn")]
 pub fn upstream_error() -> Error {
+    tracing::warn!("upstream error");
+
     Error {
         code: 5,
         message: "upstream error".into(),
     }
 }
 
-#[tracing::instrument(level = "info")]
 pub fn invalid_invocation_error() -> Error {
+    tracing::info!("invalid invocation error");
+
     Error {
         code: 100,
-        message: "invalid state".into(),
+        message: "invalid invocation error".into(),
     }
 }
 
-#[tracing::instrument(level = "info")]
 pub fn invalid_input_error() -> Error {
+    tracing::info!("invalid input error");
+
     Error {
         code: 101,
-        message: "invalid input".into(),
+        message: "invalid input error".into(),
     }
 }

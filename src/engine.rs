@@ -20,7 +20,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    #[tracing::instrument]
+    #[tracing::instrument(name = "Engine::new", skip_all)]
     pub async fn new(pool: Pool<Database>) -> Result<Self, Error> {
         // location service
         pool.execute("CREATE TABLE IF NOT EXISTS locations (token UUID PRIMARY KEY, data jsonb)")
@@ -44,7 +44,7 @@ impl Engine {
 
 #[async_trait]
 impl LocationAPI for Engine {
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn create_location(&self, source: LocationSource) -> Result<Location, Error> {
         let location: Location = match source {
             LocationSource::Coordinates(coordinates) => Location::new(coordinates, "".into()),
@@ -69,7 +69,7 @@ impl LocationAPI for Engine {
         Ok(location)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn find_location(&self, token: Uuid) -> Result<Location, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -86,7 +86,7 @@ impl LocationAPI for Engine {
 
 #[async_trait]
 impl RouteAPI for Engine {
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn create_route(
         &self,
         origin_token: Uuid,
@@ -108,7 +108,7 @@ impl RouteAPI for Engine {
         Ok(route)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn find_route(&self, token: Uuid) -> Result<Route, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -125,7 +125,7 @@ impl RouteAPI for Engine {
 
 #[async_trait]
 impl TripAPI for Engine {
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -139,7 +139,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn create_trip(&self, route_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
         let route = self.find_route(route_token).await?;
         let trip = Trip::new(passenger_id, route);
@@ -159,7 +159,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn expand_search(&self, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
@@ -187,7 +187,7 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -256,7 +256,7 @@ impl TripAPI for Engine {
         Ok(None)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error> {
         let mut conn = self.pool.acquire().await?;
 

@@ -33,6 +33,7 @@ impl Driver {
         }
     }
 
+    #[tracing::instrument]
     pub fn assign_trip(&mut self, trip_id: Uuid) -> Result<(), Error> {
         match self.status {
             Status::Available => {
