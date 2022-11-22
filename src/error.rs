@@ -31,31 +31,22 @@ impl From<reqwest::Error> for Error {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self.code {
-            1..=99 => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
+        let (status, message) = match self.code {
+            0..=99 => (StatusCode::INTERNAL_SERVER_ERROR, "internal server error"),
             _ => (StatusCode::BAD_REQUEST, self.message.as_str()),
         };
 
         let body = Json(json!({
             "code": self.code,
-            "error": error_message,
+            "message": message,
         }));
 
         (status, body).into_response()
     }
 }
 
-pub fn unexpected_error() -> Error {
-    tracing::error!("unexpected error");
-
-    Error {
-        code: 1,
-        message: "unexpected error".into(),
-    }
-}
-
 pub fn sqlx_error(err: sqlx::Error) -> Error {
-    tracing::error!("sqlx error: {}", err);
+    tracing::error!("sqlx error: {:?}", err);
 
     Error {
         code: 2,
@@ -64,7 +55,7 @@ pub fn sqlx_error(err: sqlx::Error) -> Error {
 }
 
 pub fn reqwest_error(err: reqwest::Error) -> Error {
-    tracing::error!("reqwest error: {}", err);
+    tracing::error!("reqwest error: {:?}", err);
 
     Error {
         code: 3,
@@ -73,7 +64,7 @@ pub fn reqwest_error(err: reqwest::Error) -> Error {
 }
 
 pub fn env_var_error(err: env::VarError) -> Error {
-    tracing::warn!("env var error: {}", err);
+    tracing::warn!("env var error: {:?}", err);
 
     Error {
         code: 4,

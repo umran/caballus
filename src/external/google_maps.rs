@@ -3,7 +3,7 @@ use std::env;
 
 use crate::{
     entities::Coordinates,
-    error::{invalid_input_error, unexpected_error, upstream_error, Error},
+    error::{invalid_input_error, upstream_error, Error},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,19 +59,19 @@ pub async fn find_place_suggestions(
 
     let status_code = res.status().as_u16();
 
-    if status_code >= 500 {
-        return Err(upstream_error());
-    } else if status_code != 200 {
+    if status_code >= 400 && status_code < 500 {
         return Err(invalid_input_error());
+    } else if status_code != 200 {
+        return Err(upstream_error());
     }
 
     let data: Response<PlaceSuggestions> = res.json().await?;
 
     if !(data.status == "OK" || data.status == "ZERO_RESULTS") {
-        return Err(invalid_input_error());
+        return Err(upstream_error());
     }
 
-    Ok(data.predictions.ok_or_else(|| unexpected_error())?)
+    Ok(data.predictions.ok_or_else(|| upstream_error())?)
 }
 
 #[tracing::instrument]
@@ -90,17 +90,17 @@ pub async fn find_place(id: String, session_token: String) -> Result<Place, Erro
 
     let status_code = res.status().as_u16();
 
-    if status_code >= 500 {
-        return Err(upstream_error());
-    } else if status_code != 200 {
+    if status_code >= 400 && status_code < 500 {
         return Err(invalid_input_error());
+    } else if status_code != 200 {
+        return Err(upstream_error());
     }
 
     let data: Response<Place> = res.json().await?;
 
     if data.status != "OK" {
-        return Err(invalid_input_error());
+        return Err(upstream_error());
     }
 
-    Ok(data.result.ok_or_else(|| unexpected_error())?)
+    Ok(data.result.ok_or_else(|| upstream_error())?)
 }
