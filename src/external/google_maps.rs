@@ -57,6 +57,8 @@ pub async fn find_place_suggestions(
         .send()
         .await?;
 
+    tracing::debug!("received response: {:?}", res);
+
     let status_code = res.status().as_u16();
 
     if status_code >= 400 && status_code < 500 {
@@ -87,6 +89,8 @@ pub async fn find_place(id: String, session_token: String) -> Result<Place, Erro
         .query(&[("place_id", id)])
         .send()
         .await?;
+
+    tracing::debug!("received response: {:?}", res);
 
     let status_code = res.status().as_u16();
 
