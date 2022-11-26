@@ -11,9 +11,11 @@ use crate::error::{invalid_invocation_error, Error};
 pub struct Trip {
     pub id: Uuid,
     pub status: Status,
-    pub route: Route,
     pub passenger_id: Uuid,
-    pub selected_bid_id: Option<Uuid>,
+    pub route: Route,
+    pub fare_ceiling: f64,
+    pub fare: Option<f64>,
+    pub driver_id: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,10 +23,11 @@ pub struct Trip {
 pub enum Status {
     Searching {
         deadline: DateTime<Utc>,
-        radius: f64,
     },
     PendingConfirmation {
         deadline: DateTime<Utc>,
+        driver_id: Uuid,
+        fare: f64,
     },
     DriverEnRoute {
         deadline: DateTime<Utc>,
@@ -47,28 +50,30 @@ pub enum PenaltyBearer {
 }
 
 impl Trip {
-    pub fn new(passenger_id: Uuid, route: Route) -> Self {
+    pub fn new(passenger_id: Uuid, route: Route, fare_ceiling: f64) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
-            radius: 1000.0,
         };
 
         Self {
             id: Uuid::new_v4(),
             status,
-            route,
             passenger_id,
-            selected_bid_id: None,
+            route,
+            fare_ceiling,
+            fare: None,
+            driver_id: None,
         }
     }
 
     pub fn status_string(&self) -> String {
         match self.status {
-            Status::Searching {
+            Status::Searching { deadline: _ } => "SEARCHING".to_string(),
+            Status::PendingConfirmation {
                 deadline: _,
-                radius: _,
-            } => "SEARCHING".to_string(),
-            Status::PendingConfirmation { deadline: _ } => "PENDING_CONFIRMATION".to_string(),
+                driver_id: _,
+                fare: _,
+            } => "PENDING_CONFIRMATION".to_string(),
             Status::DriverEnRoute { deadline: _ } => "DRIVER_EN_ROUTE".to_string(),
             Status::DriverArrived {
                 is_late: _,
@@ -81,10 +86,7 @@ impl Trip {
 
     pub fn is_searching(&self) -> bool {
         match &self.status {
-            Status::Searching {
-                deadline: _,
-                radius: _,
-            } => true,
+            Status::Searching { deadline: _ } => true,
             _ => false,
         }
     }
@@ -92,47 +94,7 @@ impl Trip {
     #[tracing::instrument]
     pub fn search_deadline(&self) -> Result<DateTime<Utc>, Error> {
         match &self.status {
-            Status::Searching {
-                deadline,
-                radius: _,
-            } => Ok(*deadline),
-            _ => Err(invalid_invocation_error()),
-        }
-    }
-
-    #[tracing::instrument]
-    pub fn expand_search(&mut self) -> Result<(), Error> {
-        match &self.status {
-            Status::Searching {
-                deadline: _,
-                radius,
-            } => {
-                self.status = Status::Searching {
-                    deadline: Utc::now() + Duration::seconds(60),
-                    radius: *radius * 1.1,
-                };
-
-                Ok(())
-            }
-            _ => Err(invalid_invocation_error()),
-        }
-    }
-
-    #[tracing::instrument]
-    pub fn select_bid(&mut self, bid_id: Uuid) -> Result<(), Error> {
-        match &self.status {
-            Status::Searching {
-                deadline: _,
-                radius: _,
-            } => {
-                self.selected_bid_id = Some(bid_id);
-
-                self.status = Status::PendingConfirmation {
-                    deadline: Utc::now() + Duration::seconds(60),
-                };
-
-                Ok(())
-            }
+            Status::Searching { deadline } => Ok(*deadline),
             _ => Err(invalid_invocation_error()),
         }
     }
@@ -148,11 +110,12 @@ impl Trip {
     #[tracing::instrument]
     fn cancellation_result(&self, is_passenger: bool) -> Result<Option<PenaltyBearer>, Error> {
         match &self.status {
-            Status::Searching {
+            Status::Searching { deadline: _ }
+            | Status::PendingConfirmation {
                 deadline: _,
-                radius: _,
-            }
-            | Status::PendingConfirmation { deadline: _ } => Ok(None),
+                driver_id: _,
+                fare: _,
+            } => Ok(None),
             Status::DriverEnRoute { deadline } => match is_passenger {
                 true => {
                     if Utc::now() >= *deadline {

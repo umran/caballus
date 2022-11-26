@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::entities::{Bid, Location, LocationSource, Route, Trip};
+use crate::entities::{Location, LocationSource, Quote, Route, Trip};
 use crate::error::Error;
 
 #[async_trait]
@@ -21,12 +21,16 @@ pub trait RouteAPI {
 }
 
 #[async_trait]
+pub trait QuoteAPI {
+    async fn create_quote(&self, route_token: Uuid) -> Result<Quote, Error>;
+    async fn find_quote(&self, token: Uuid) -> Result<Quote, Error>;
+}
+
+#[async_trait]
 pub trait TripAPI {
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error>;
-    async fn create_trip(&self, route_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error>;
-    async fn expand_search(&self, id: Uuid) -> Result<Trip, Error>;
-    async fn evaluate_bids(&self, id: Uuid) -> Result<Option<Trip>, Error>;
-    async fn submit_bid(&self, trip_id: Uuid, driver_id: Uuid, amount: i64) -> Result<Bid, Error>;
+    async fn create_trip(&self, quote_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error>;
+    // async fn assign_driver(&self, id: Uuid) -> Result<Trip, Error>;
 }
 
 pub trait API: LocationAPI + RouteAPI + TripAPI {}
