@@ -1,13 +1,15 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::TryStreamExt;
+use geo_types::Geometry;
+use geozero::wkb;
 use serde_json::json;
 use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::{
-    api::{LocationAPI, QuoteAPI, RouteAPI, TripAPI, API},
-    entities::{Location, LocationSource, Quote, Route, Trip},
+    api::{DriverAPI, LocationAPI, QuoteAPI, RouteAPI, TripAPI, API},
+    entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip},
     error::{invalid_input_error, Error},
     external::google_maps,
 };
@@ -23,27 +25,40 @@ impl Engine {
     #[tracing::instrument(name = "Engine::new", skip_all)]
     pub async fn new(pool: Pool<Database>) -> Result<Self, Error> {
         // location service (KV store)
-        pool.execute("CREATE TABLE IF NOT EXISTS locations (token UUID PRIMARY KEY, data JSONB)")
+        pool.execute("DROP TABLE IF EXISTS locations CASCADE")
+            .await?;
+        pool.execute("CREATE TABLE locations (token UUID PRIMARY KEY, data JSONB NOT NULL)")
             .await?;
 
         // route service (KV store)
-        pool.execute("CREATE TABLE IF NOT EXISTS routes (token UUID PRIMARY KEY, data JSONB)")
+        pool.execute("DROP TABLE IF EXISTS routes CASCADE").await?;
+        pool.execute("CREATE TABLE routes (token UUID PRIMARY KEY, data JSONB NOT NULL)")
             .await?;
 
         // quote service (KV store)
-        pool.execute("CREATE TABLE IF NOT EXISTS quotes (token UUID PRIMARY KEY, data JSONB)")
+        pool.execute("DROP TABLE IF EXISTS quotes CASCADE").await?;
+        pool.execute("CREATE TABLE quotes (token UUID PRIMARY KEY, data JSONB NOT NULL)")
             .await?;
 
         // trip service
-        pool.execute("CREATE TABLE IF NOT EXISTS trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB)")
+        pool.execute("DROP TABLE IF EXISTS trips CASCADE").await?;
+        pool.execute("CREATE TABLE trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB)")
+
+        pool.execute("DROP TABLE IF EXISTS drivers CASCADE").await?;
+        pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
+            .await?;
+
+        pool.execute("DROP TABLE IF EXISTS driver_rates CASCADE")
             .await?;
         pool.execute(
-            "CREATE TABLE IF NOT EXISTS driver_rates (driver_id UUID PRIMARY KEY, data JSONB)",
+            "CREATE TABLE driver_rates (driver_id UUID PRIMARY KEY, min_fare DECIMAL, rate DECIMAL)",
         )
         .await?;
-        pool.execute("CREATE TABLE IF NOT EXISTS driver_locations (driver_id UUID PRIMARY KEY, location geometry(Point), expiry TIMESTAMP)")
+
+        pool.execute("DROP TABLE IF EXISTS driver_locations CASCADE")
+            .await?;
+        pool.execute("CREATE TABLE driver_locations (driver_id UUID PRIMARY KEY, location geometry(Point), expiry TIMESTAMP)")
             .await?;
 
         Ok(Self { pool })
@@ -103,7 +118,7 @@ impl RouteAPI for Engine {
         let origin = self.find_location(origin_token).await?;
         let destination = self.find_location(destination_token).await?;
 
-        let route = Route::new(origin, destination, json!(""));
+        let route = Route::new(origin, destination, json!(""), 1000.0);
 
         let mut conn = self.pool.acquire().await?;
         conn.execute(
@@ -137,10 +152,40 @@ impl QuoteAPI for Engine {
     async fn create_quote(&self, route_token: Uuid) -> Result<Quote, Error> {
         let route = self.find_route(route_token).await?;
 
+        let origin_location: Geometry<f64> = route.origin.coordinates.clone().into();
+
+        let query = "
+            SELECT
+                percentile_cont(0.75) WITHIN GROUP (
+                    ORDER BY
+                        fares.amount ASC
+                ) AS percentile_75
+            FROM
+                (
+                    SELECT
+                        GREATEST(
+                            r.min_fare, r.rate * (
+                                ST_Distance(l.location, ST_SetSRID($1, 4326)) + $3
+                            )
+                        ) AS amount
+                    FROM
+                        drivers d
+                        LEFT JOIN driver_rates r ON d.id = r.driver_id
+                        LEFT JOIN driver_locations l ON d.id = l.driver_id
+                    WHERE
+                        d.status = 'AVAILABLE'
+                        AND r.rate IS NOT NULL
+                        AND l.location IS NOT NULL
+                        AND l.expiry > now()
+                        AND ST_DWithin(l.location, ST_SetSRID($1, 4326), $2)
+                ) AS fares
+        ";
+
         // return a dummy quote for now
         Ok(Quote::new(route, 50.0))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn find_quote(&self, quote_token: Uuid) -> Result<Quote, Error> {
         let mut conn = self.pool.acquire().await?;
 
@@ -191,6 +236,42 @@ impl TripAPI for Engine {
         .await?;
 
         Ok(trip)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn assign_driver(&self, id: Uuid) -> Result<Trip, Error> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl DriverAPI for Engine {
+    #[tracing::instrument(skip(self))]
+    async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error> {
+        unimplemented!()
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn find_driver(&self, id: Uuid) -> Result<Driver, Error> {
+        unimplemented!()
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn report_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error> {
+        let mut conn = self.pool.acquire().await?;
+
+        let location: Geometry<f64> = location.into();
+
+        conn.execute(
+            sqlx::query(
+                "UPDATE driver_locations SET location = ST_SetSRID($2, 4326) WHERE driver_id = $1",
+            )
+            .bind(&id)
+            .bind(&wkb::Encode(location)),
+        )
+        .await?;
+
+        unimplemented!()
     }
 }
 

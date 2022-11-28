@@ -6,6 +6,7 @@ use crate::error::{invalid_invocation_error, Error};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Driver {
     pub id: Uuid,
+    pub user_id: Uuid,
     pub status: Status,
     pub active_vehicle_id: Option<Uuid>,
     pub active_trip_id: Option<Uuid>,

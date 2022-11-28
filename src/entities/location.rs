@@ -1,3 +1,4 @@
+use geo_types::{Geometry, Point};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -58,5 +59,17 @@ impl TryFrom<String> for Coordinates {
         let lng = lng.parse::<f64>().map_err(|_| invalid_input_error())?;
 
         Ok(Coordinates { lat, lng })
+    }
+}
+
+impl Into<Point<f64>> for Coordinates {
+    fn into(self) -> Point<f64> {
+        Point::new(self.lat, self.lng)
+    }
+}
+
+impl Into<Geometry<f64>> for Coordinates {
+    fn into(self) -> Geometry<f64> {
+        Geometry::Point(self.into())
     }
 }

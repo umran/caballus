@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::entities::{Location, LocationSource, Quote, Route, Trip};
+use crate::entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip};
 use crate::error::Error;
 
 #[async_trait]
@@ -30,7 +30,14 @@ pub trait QuoteAPI {
 pub trait TripAPI {
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error>;
     async fn create_trip(&self, quote_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error>;
-    // async fn assign_driver(&self, id: Uuid) -> Result<Trip, Error>;
+    async fn assign_driver(&self, id: Uuid) -> Result<Trip, Error>;
+}
+
+#[async_trait]
+pub trait DriverAPI {
+    async fn find_driver(&self, id: Uuid) -> Result<Driver, Error>;
+    async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error>;
+    async fn report_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error>;
 }
 
 pub trait API: LocationAPI + RouteAPI + TripAPI {}

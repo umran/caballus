@@ -10,16 +10,18 @@ pub struct Route {
     pub origin: Location,
     pub destination: Location,
     pub directions: Value,
+    pub distance: f64,
     // ...
 }
 
 impl Route {
-    pub fn new(origin: Location, destination: Location, directions: Value) -> Self {
+    pub fn new(origin: Location, destination: Location, directions: Value, distance: f64) -> Self {
         Route {
             token: Uuid::new_v4(),
             origin,
             destination,
             directions,
+            distance,
         }
     }
 }
