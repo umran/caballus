@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-// use futures::TryStreamExt;
 use geo_types::Geometry;
 use geozero::wkb;
 use serde_json::json;
@@ -153,12 +152,13 @@ impl QuoteAPI for Engine {
         let route = self.find_route(route_token).await?;
 
         let origin_location: Geometry<f64> = route.origin.coordinates.clone().into();
+        let search_radius = 2000.0;
 
         let query = "
             SELECT
                 percentile_cont(0.75) WITHIN GROUP (
                     ORDER BY
-                        fares.amount ASC
+                        fares.fare ASC
                 ) AS max_fare
             FROM
                 (
@@ -167,7 +167,7 @@ impl QuoteAPI for Engine {
                             r.min_fare, r.rate * (
                                 ST_Distance(l.location, ST_SetSRID($1, 4326)) + $2
                             )
-                        ) AS amount
+                        ) AS fare
                     FROM
                         drivers d
                         LEFT JOIN driver_rates r ON d.id = r.driver_id
@@ -188,7 +188,7 @@ impl QuoteAPI for Engine {
                 sqlx::query(query)
                     .bind(wkb::Encode(origin_location))
                     .bind(route.distance)
-                    .bind(2000.0),
+                    .bind(search_radius),
             )
             .await?
             .try_get("max_fare")?;
@@ -264,8 +264,133 @@ impl TripAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn assign_driver(&self, id: Uuid) -> Result<Trip, Error> {
-        unimplemented!()
+    async fn request_driver(&self, id: Uuid) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        // fetch trip for update
+        let Json(mut trip): Json<Trip> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        let origin_location: Geometry<f64> = trip.route.origin.coordinates.clone().into();
+        let trip_distance = trip.route.distance;
+        let search_radius = 2000.0;
+
+        // fetch potential driver ids
+        let query = "
+            SELECT
+                d.id AS driver_id
+            FROM
+                drivers d
+                LEFT JOIN driver_rates r ON d.id = r.driver_id
+                LEFT JOIN driver_locations l ON d.id = l.driver_id
+            WHERE
+                d.status = 'AVAILABLE'
+                AND r.rate IS NOT NULL
+                AND l.location IS NOT NULL
+                AND l.expiry > now()
+                AND ST_DWithin(l.location, ST_SetSRID($1, 4326), $3)
+                AND
+                    GREATEST(
+                        r.min_fare, r.rate * (
+                            ST_Distance(l.location, ST_SetSRID($1, 4326)) + $2
+                        )
+                    ) <= $4
+        ";
+
+        let results = tx
+            .fetch_all(
+                sqlx::query(query)
+                    .bind(wkb::Encode(origin_location.clone()))
+                    .bind(trip_distance)
+                    .bind(search_radius)
+                    .bind(trip.max_fare),
+            )
+            .await?;
+
+        for result in results.iter() {
+            let driver_id: Uuid = result.try_get("driver_id")?;
+
+            // fetch driver for update
+            let query = "
+                SELECT
+                    d.data AS driver,
+                    GREATEST(
+                        r.min_fare, r.rate * (
+                            ST_Distance(l.location, ST_SetSRID($2, 4326)) + $3
+                        )
+                    ) AS fare
+                FROM
+                    drivers d
+                    LEFT JOIN driver_rates r ON d.id = r.driver_id
+                    LEFT JOIN driver_locations l ON d.id = l.driver_id
+                WHERE
+                    d.id = $1
+                    AND d.status = 'AVAILABLE'
+                    AND r.rate IS NOT NULL
+                    AND l.location IS NOT NULL
+                    AND l.expiry > now()
+                    AND ST_DWithin(l.location, ST_SetSRID($2, 4326), $4)
+                    AND
+                        GREATEST(
+                            r.min_fare, r.rate * (
+                                ST_Distance(l.location, ST_SetSRID($2, 4326)) + $3
+                            )
+                        ) <= $5
+                FOR UPDATE
+            ";
+
+            let maybe_result = tx
+                .fetch_optional(
+                    sqlx::query(query)
+                        .bind(&driver_id)
+                        .bind(wkb::Encode(origin_location.clone()))
+                        .bind(trip_distance)
+                        .bind(search_radius)
+                        .bind(trip.max_fare),
+                )
+                .await?;
+
+            if maybe_result.is_none() {
+                continue;
+            }
+
+            // note that unwrap will never panic because it is never called if maybe_result is none
+            let result = maybe_result.unwrap();
+
+            let Json(mut driver): Json<Driver> = result.try_get("driver")?;
+            let fare: f64 = result.try_get("fare")?;
+
+            driver.request(trip.id.clone())?;
+
+            tx.execute(
+                sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                    .bind(&driver.id)
+                    .bind(driver.status_string())
+                    .bind(Json(&driver)),
+            )
+            .await?;
+
+            trip.request_driver(driver_id, fare)?;
+
+            tx.execute(
+                sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
+                    .bind(&trip.id)
+                    .bind(trip.status_string())
+                    .bind(Json(&trip)),
+            )
+            .await?;
+
+            tx.commit().await?;
+            return Ok(trip);
+        }
+
+        Ok(trip)
     }
 }
 
