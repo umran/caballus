@@ -7,15 +7,15 @@ use crate::entities::Route;
 pub struct Quote {
     pub token: Uuid,
     pub route: Route,
-    pub amount: f64,
+    pub max_fare: f64,
 }
 
 impl Quote {
-    pub fn new(route: Route, amount: f64) -> Self {
+    pub fn new(route: Route, max_fare: f64) -> Self {
         Self {
             token: Uuid::new_v4(),
             route,
-            amount,
+            max_fare,
         }
     }
 }

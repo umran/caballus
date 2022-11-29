@@ -8,22 +8,32 @@ pub struct Driver {
     pub id: Uuid,
     pub user_id: Uuid,
     pub status: Status,
-    pub active_vehicle_id: Option<Uuid>,
-    pub active_trip_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
-    Assigned,
+    Idle,
     Available,
+    Requested { trip_id: Uuid },
+    Assigned { trip_id: Uuid },
 }
 
 impl Driver {
+    pub fn new(user_id: Uuid) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            user_id,
+            status: Status::Idle,
+        }
+    }
+
     pub fn status_string(&self) -> String {
         match self.status {
-            Status::Assigned => "ASSIGNED".to_string(),
-            Status::Available => "AVAILABLE".to_string(),
+            Status::Idle => "IDLE".into(),
+            Status::Available => "AVAILABLE".into(),
+            Status::Requested { trip_id: _ } => "REQUESTED".into(),
+            Status::Assigned { trip_id: _ } => "ASSIGNED".into(),
         }
     }
 
@@ -35,10 +45,55 @@ impl Driver {
     }
 
     #[tracing::instrument]
-    pub fn assign_trip(&mut self, trip_id: Uuid) -> Result<(), Error> {
+    pub fn request(&mut self, trip_id: Uuid) -> Result<(), Error> {
         match self.status {
             Status::Available => {
-                self.active_trip_id = Some(trip_id);
+                self.status = Status::Requested { trip_id };
+                Ok(())
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    pub fn assign(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::Requested { trip_id } => {
+                self.status = Status::Assigned { trip_id };
+                Ok(())
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    #[tracing::instrument]
+    pub fn free(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::Requested { trip_id: _ } | Status::Assigned { trip_id: _ } => {
+                self.status = Status::Available;
+            }
+            _ => (),
+        };
+
+        Ok(())
+    }
+
+    #[tracing::instrument]
+    pub fn start(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::Idle => {
+                self.status = Status::Available;
+            }
+            _ => (),
+        };
+
+        Ok(())
+    }
+
+    #[tracing::instrument]
+    pub fn stop(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::Available => {
+                self.status = Status::Idle;
                 Ok(())
             }
             _ => Err(invalid_invocation_error()),

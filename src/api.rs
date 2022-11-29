@@ -22,7 +22,7 @@ pub trait RouteAPI {
 
 #[async_trait]
 pub trait QuoteAPI {
-    async fn create_quote(&self, route_token: Uuid) -> Result<Quote, Error>;
+    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error>;
     async fn find_quote(&self, token: Uuid) -> Result<Quote, Error>;
 }
 
@@ -37,7 +37,10 @@ pub trait TripAPI {
 pub trait DriverAPI {
     async fn find_driver(&self, id: Uuid) -> Result<Driver, Error>;
     async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error>;
-    async fn report_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error>;
+    async fn start_driver(&self, id: Uuid) -> Result<Driver, Error>;
+    async fn stop_driver(&self, id: Uuid) -> Result<Driver, Error>;
+    async fn update_driver_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error>;
+    async fn update_driver_rate(&self, id: Uuid, min_fare: f64, rate: f64) -> Result<(), Error>;
 }
 
 pub trait API: LocationAPI + RouteAPI + TripAPI {}

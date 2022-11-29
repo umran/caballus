@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use chrono::Utc;
-use futures::TryStreamExt;
+use chrono::{Duration, Utc};
+// use futures::TryStreamExt;
 use geo_types::Geometry;
 use geozero::wkb;
 use serde_json::json;
@@ -46,7 +46,7 @@ impl Engine {
             .await?;
 
         pool.execute("DROP TABLE IF EXISTS drivers CASCADE").await?;
-        pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
+        pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, user_id UUID NOT NULL UNIQUE, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
 
         pool.execute("DROP TABLE IF EXISTS driver_rates CASCADE")
@@ -118,7 +118,7 @@ impl RouteAPI for Engine {
         let origin = self.find_location(origin_token).await?;
         let destination = self.find_location(destination_token).await?;
 
-        let route = Route::new(origin, destination, json!(""), 1000.0);
+        let route = Route::new(origin, destination, json!(""), 4500.0);
 
         let mut conn = self.pool.acquire().await?;
         conn.execute(
@@ -149,7 +149,7 @@ impl RouteAPI for Engine {
 #[async_trait]
 impl QuoteAPI for Engine {
     #[tracing::instrument(skip(self))]
-    async fn create_quote(&self, route_token: Uuid) -> Result<Quote, Error> {
+    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error> {
         let route = self.find_route(route_token).await?;
 
         let origin_location: Geometry<f64> = route.origin.coordinates.clone().into();
@@ -159,13 +159,13 @@ impl QuoteAPI for Engine {
                 percentile_cont(0.75) WITHIN GROUP (
                     ORDER BY
                         fares.amount ASC
-                ) AS percentile_75
+                ) AS max_fare
             FROM
                 (
                     SELECT
                         GREATEST(
                             r.min_fare, r.rate * (
-                                ST_Distance(l.location, ST_SetSRID($1, 4326)) + $3
+                                ST_Distance(l.location, ST_SetSRID($1, 4326)) + $2
                             )
                         ) AS amount
                     FROM
@@ -177,12 +177,37 @@ impl QuoteAPI for Engine {
                         AND r.rate IS NOT NULL
                         AND l.location IS NOT NULL
                         AND l.expiry > now()
-                        AND ST_DWithin(l.location, ST_SetSRID($1, 4326), $2)
+                        AND ST_DWithin(l.location, ST_SetSRID($1, 4326), $3)
                 ) AS fares
         ";
 
-        // return a dummy quote for now
-        Ok(Quote::new(route, 50.0))
+        let mut conn = self.pool.acquire().await?;
+
+        let maybe_max_fare: Option<f64> = conn
+            .fetch_one(
+                sqlx::query(query)
+                    .bind(wkb::Encode(origin_location))
+                    .bind(route.distance)
+                    .bind(2000.0),
+            )
+            .await?
+            .try_get("max_fare")?;
+
+        match maybe_max_fare {
+            Some(max_fare) => {
+                let quote = Quote::new(route, max_fare);
+
+                conn.execute(
+                    sqlx::query("INSERT INTO quotes (token, data) VALUES ($1, $2)")
+                        .bind(&quote.token)
+                        .bind(Json(&quote)),
+                )
+                .await?;
+
+                Ok(Some(quote))
+            }
+            None => Ok(None),
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -221,7 +246,7 @@ impl TripAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn create_trip(&self, quote_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
         let quote = self.find_quote(quote_token).await?;
-        let trip = Trip::new(passenger_id, quote.route, quote.amount);
+        let trip = Trip::new(passenger_id, quote.route, quote.max_fare);
 
         let mut conn = self.pool.acquire().await?;
 
@@ -248,30 +273,151 @@ impl TripAPI for Engine {
 impl DriverAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error> {
-        unimplemented!()
+        let driver = Driver::new(user_id);
+
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let existing_record = tx
+            .fetch_optional(
+                sqlx::query("SELECT id FROM drivers WHERE user_id = $1 FOR UPDATE")
+                    .bind(&driver.user_id),
+            )
+            .await?;
+
+        if existing_record.is_some() {
+            tracing::info!("driver already exists for user_id: {:?}", &driver.user_id);
+            return Err(invalid_input_error());
+        }
+
+        tx.execute(
+            sqlx::query("INSERT INTO drivers (id, user_id, status, data) VALUES ($1, $2, $3, $4)")
+                .bind(&driver.id)
+                .bind(&driver.user_id)
+                .bind(&driver.status_string())
+                .bind(Json(&driver)),
+        )
+        .await?;
+
+        tx.execute(
+            sqlx::query(
+                "INSERT INTO driver_rates (driver_id, min_fare, rate) VALUES ($1, NULL, NULL)",
+            )
+            .bind(&driver.id),
+        )
+        .await?;
+
+        tx.execute(sqlx::query(
+            "INSERT INTO driver_locations (driver_id, location, expiry) VALUES ($1, NULL, NULL)",
+        ).bind(&driver.id))
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(driver)
     }
 
     #[tracing::instrument(skip(self))]
     async fn find_driver(&self, id: Uuid) -> Result<Driver, Error> {
-        unimplemented!()
+        let mut conn = self.pool.acquire().await?;
+
+        let Json(driver) = conn
+            .fetch_optional(sqlx::query("SELECT data FROM drivers WHERE id = $1").bind(&id))
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        Ok(driver)
     }
 
     #[tracing::instrument(skip(self))]
-    async fn report_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error> {
+    async fn start_driver(&self, id: Uuid) -> Result<Driver, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let Json(mut driver): Json<Driver> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        driver.start()?;
+
+        tx.execute(
+            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                .bind(&id)
+                .bind(driver.status_string())
+                .bind(Json(&driver)),
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(driver)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn stop_driver(&self, id: Uuid) -> Result<Driver, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let Json(mut driver): Json<Driver> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        driver.stop()?;
+
+        tx.execute(
+            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                .bind(&id)
+                .bind(driver.status_string())
+                .bind(Json(&driver)),
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(driver)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn update_driver_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error> {
         let mut conn = self.pool.acquire().await?;
 
         let location: Geometry<f64> = location.into();
 
         conn.execute(
             sqlx::query(
-                "UPDATE driver_locations SET location = ST_SetSRID($2, 4326) WHERE driver_id = $1",
+                "UPDATE driver_locations SET location = ST_SetSRID($2, 4326), expiry = $3 WHERE driver_id = $1",
             )
             .bind(&id)
-            .bind(&wkb::Encode(location)),
+            .bind(wkb::Encode(location))
+            .bind(Utc::now() + Duration::seconds(60)),
         )
         .await?;
 
-        unimplemented!()
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn update_driver_rate(&self, id: Uuid, min_fare: f64, rate: f64) -> Result<(), Error> {
+        let mut conn = self.pool.acquire().await?;
+
+        conn.execute(
+            sqlx::query("UPDATE driver_rates SET min_fare = $2, rate = $3 WHERE driver_id = $1")
+                .bind(&id)
+                .bind(min_fare)
+                .bind(rate),
+        )
+        .await?;
+
+        Ok(())
     }
 }
 

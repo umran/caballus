@@ -13,9 +13,9 @@ pub struct Trip {
     pub status: Status,
     pub passenger_id: Uuid,
     pub route: Route,
-    pub fare_ceiling: f64,
+    pub max_fare: f64,
     pub fare: Option<f64>,
-    pub driver_id: Option<f64>,
+    pub driver_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub enum PenaltyBearer {
 }
 
 impl Trip {
-    pub fn new(passenger_id: Uuid, route: Route, fare_ceiling: f64) -> Self {
+    pub fn new(passenger_id: Uuid, route: Route, max_fare: f64) -> Self {
         let status = Status::Searching {
             deadline: Utc::now() + Duration::seconds(60),
         };
@@ -60,7 +60,7 @@ impl Trip {
             status,
             passenger_id,
             route,
-            fare_ceiling,
+            max_fare,
             fare: None,
             driver_id: None,
         }
@@ -92,9 +92,33 @@ impl Trip {
     }
 
     #[tracing::instrument]
-    pub fn search_deadline(&self) -> Result<DateTime<Utc>, Error> {
-        match &self.status {
-            Status::Searching { deadline } => Ok(*deadline),
+    pub fn request_driver(&mut self, driver_id: Uuid, fare: f64) -> Result<(), Error> {
+        match self.status {
+            Status::Searching { deadline: _ } => {
+                self.status = Status::PendingConfirmation {
+                    deadline: Utc::now() + Duration::seconds(30),
+                    driver_id,
+                    fare,
+                };
+                Ok(())
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    #[tracing::instrument]
+    pub fn confirm_driver(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::PendingConfirmation {
+                deadline: _,
+                driver_id,
+                fare,
+            } => {
+                self.fare = Some(fare);
+                self.driver_id = Some(driver_id);
+
+                Ok(())
+            }
             _ => Err(invalid_invocation_error()),
         }
     }
