@@ -301,6 +301,8 @@ impl TripAPI for Engine {
                             ST_Distance(l.location, ST_SetSRID($1, 4326)) + $2
                         )
                     ) <= $4
+            ORDER BY
+                ST_Distance(l.location, ST_SetSRID($1, 4326)) ASC
         ";
 
         let results = tx
