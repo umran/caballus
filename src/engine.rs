@@ -156,7 +156,7 @@ impl QuoteAPI for Engine {
 
         let query = "
             SELECT
-                percentile_cont(0.75) WITHIN GROUP (
+                percentile_cont(0.5) WITHIN GROUP (
                     ORDER BY
                         fares.fare ASC
                 ) AS max_fare
