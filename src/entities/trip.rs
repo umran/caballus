@@ -21,10 +21,8 @@ pub struct Trip {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
-    Searching {
-        deadline: DateTime<Utc>,
-    },
-    PendingConfirmation {
+    Searching,
+    PendingAssignment {
         deadline: DateTime<Utc>,
         driver_id: Uuid,
         fare: f64,
@@ -51,9 +49,7 @@ pub enum PenaltyBearer {
 
 impl Trip {
     pub fn new(passenger_id: Uuid, route: Route, max_fare: f64) -> Self {
-        let status = Status::Searching {
-            deadline: Utc::now() + Duration::seconds(60),
-        };
+        let status = Status::Searching;
 
         Self {
             id: Uuid::new_v4(),
@@ -68,8 +64,8 @@ impl Trip {
 
     pub fn status_string(&self) -> String {
         match self.status {
-            Status::Searching { deadline: _ } => "SEARCHING".to_string(),
-            Status::PendingConfirmation {
+            Status::Searching => "SEARCHING".to_string(),
+            Status::PendingAssignment {
                 deadline: _,
                 driver_id: _,
                 fare: _,
@@ -86,7 +82,7 @@ impl Trip {
 
     pub fn is_searching(&self) -> bool {
         match &self.status {
-            Status::Searching { deadline: _ } => true,
+            Status::Searching => true,
             _ => false,
         }
     }
@@ -94,8 +90,8 @@ impl Trip {
     #[tracing::instrument]
     pub fn request_driver(&mut self, driver_id: Uuid, fare: f64) -> Result<(), Error> {
         match self.status {
-            Status::Searching { deadline: _ } => {
-                self.status = Status::PendingConfirmation {
+            Status::Searching => {
+                self.status = Status::PendingAssignment {
                     deadline: Utc::now() + Duration::seconds(30),
                     driver_id,
                     fare,
@@ -107,15 +103,33 @@ impl Trip {
     }
 
     #[tracing::instrument]
-    pub fn confirm_driver(&mut self) -> Result<(), Error> {
+    pub fn derequest_driver(&mut self) -> Result<Uuid, Error> {
         match self.status {
-            Status::PendingConfirmation {
+            Status::PendingAssignment {
+                deadline: _,
+                driver_id,
+                fare: _,
+            } => {
+                self.status = Status::Searching;
+                Ok(driver_id)
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    #[tracing::instrument]
+    pub fn assign_driver(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::PendingAssignment {
                 deadline: _,
                 driver_id,
                 fare,
             } => {
-                self.fare = Some(fare);
+                self.status = Status::DriverEnRoute {
+                    deadline: Utc::now() + Duration::minutes(15),
+                };
                 self.driver_id = Some(driver_id);
+                self.fare = Some(fare);
 
                 Ok(())
             }
@@ -134,8 +148,8 @@ impl Trip {
     #[tracing::instrument]
     fn cancellation_result(&self, is_passenger: bool) -> Result<Option<PenaltyBearer>, Error> {
         match &self.status {
-            Status::Searching { deadline: _ }
-            | Status::PendingConfirmation {
+            Status::Searching
+            | Status::PendingAssignment {
                 deadline: _,
                 driver_id: _,
                 fare: _,

@@ -44,6 +44,11 @@ impl Engine {
         pool.execute("CREATE TABLE trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
 
+        pool.execute("DROP TABLE IF EXISTS trip_rejections CASCADE")
+            .await?;
+        pool.execute("CREATE TABLE trip_rejections (trip_id UUID NOT NULL, driver_id UUID NOT NULL, PRIMARY KEY (trip_id, driver_id))")
+            .await?;
+
         pool.execute("DROP TABLE IF EXISTS drivers CASCADE").await?;
         pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, user_id UUID NOT NULL UNIQUE, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
@@ -59,6 +64,13 @@ impl Engine {
             .await?;
         pool.execute("CREATE TABLE driver_locations (driver_id UUID PRIMARY KEY, location geometry(Point), expiry TIMESTAMP)")
             .await?;
+
+        pool.execute("DROP TABLE IF EXISTS driver_priorities CASCADE")
+            .await?;
+        pool.execute(
+            "CREATE TABLE driver_priorities (driver_id UUID PRIMARY KEY, priority INT4 NOT NULL)",
+        )
+        .await?;
 
         Ok(Self { pool })
     }
@@ -281,7 +293,7 @@ impl TripAPI for Engine {
         let trip_distance = trip.route.distance;
         let search_radius = 2000.0;
 
-        // fetch potential driver ids
+        // fetch potential driver ids for trip
         let query = "
             SELECT
                 d.id AS driver_id
@@ -289,8 +301,11 @@ impl TripAPI for Engine {
                 drivers d
                 LEFT JOIN driver_rates r ON d.id = r.driver_id
                 LEFT JOIN driver_locations l ON d.id = l.driver_id
+                LEFT JOIN driver_priorities p ON d.id = p.driver_id
+                LEFT JOIN trip_rejections tr ON tr.trip_id = $5 AND d.id = tr.driver_id
             WHERE
                 d.status = 'AVAILABLE'
+                AND tr.driver_id IS NULL
                 AND r.rate IS NOT NULL
                 AND l.location IS NOT NULL
                 AND l.expiry > now()
@@ -302,6 +317,7 @@ impl TripAPI for Engine {
                         )
                     ) <= $4
             ORDER BY
+                p.priority ASC,
                 ST_Distance(l.location, ST_SetSRID($1, 4326)) ASC
         ";
 
@@ -311,7 +327,8 @@ impl TripAPI for Engine {
                     .bind(wkb::Encode(origin_location.clone()))
                     .bind(trip_distance)
                     .bind(search_radius)
-                    .bind(trip.max_fare),
+                    .bind(trip.max_fare)
+                    .bind(&trip.id),
             )
             .await?;
 
@@ -331,9 +348,11 @@ impl TripAPI for Engine {
                     drivers d
                     LEFT JOIN driver_rates r ON d.id = r.driver_id
                     LEFT JOIN driver_locations l ON d.id = l.driver_id
+                    LEFT JOIN trip_rejections tr ON tr.trip_id = $6 AND d.id = tr.driver_id
                 WHERE
                     d.id = $1
                     AND d.status = 'AVAILABLE'
+                    AND tr.driver_id IS NULL
                     AND r.rate IS NOT NULL
                     AND l.location IS NOT NULL
                     AND l.expiry > now()
@@ -354,7 +373,8 @@ impl TripAPI for Engine {
                         .bind(wkb::Encode(origin_location.clone()))
                         .bind(trip_distance)
                         .bind(search_radius)
-                        .bind(trip.max_fare),
+                        .bind(trip.max_fare)
+                        .bind(&trip.id),
                 )
                 .await?;
 
@@ -391,6 +411,63 @@ impl TripAPI for Engine {
             tx.commit().await?;
             return Ok(trip);
         }
+
+        Ok(trip)
+    }
+
+    async fn derequest_driver(&self, id: Uuid, rejected: bool) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let Json(mut trip): Json<Trip> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        let driver_id = trip.derequest_driver()?;
+
+        tx.execute(
+            sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
+                .bind(&trip.id)
+                .bind(trip.status_string())
+                .bind(Json(&trip)),
+        )
+        .await?;
+
+        // update driver
+        let Json(mut driver): Json<Driver> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&driver_id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        driver.free()?;
+
+        tx.execute(
+            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                .bind(&driver.id)
+                .bind(&driver.status_string())
+                .bind(Json(&driver)),
+        )
+        .await?;
+
+        if rejected {
+            tx.execute(
+                sqlx::query("INSERT INTO trip_rejections (trip_id, driver_id) VALUES ($1, $2)")
+                    .bind(&trip.id)
+                    .bind(&driver.id),
+            )
+            .await?;
+        } else {
+            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
+        }
+
+        tx.commit().await?;
 
         Ok(trip)
     }
@@ -437,6 +514,12 @@ impl DriverAPI for Engine {
         tx.execute(sqlx::query(
             "INSERT INTO driver_locations (driver_id, location, expiry) VALUES ($1, NULL, NULL)",
         ).bind(&driver.id))
+        .await?;
+
+        tx.execute(
+            sqlx::query("INSERT INTO driver_priorities (driver_id, priority) VALUES ($1, 0)")
+                .bind(&driver.id),
+        )
         .await?;
 
         tx.commit().await?;
