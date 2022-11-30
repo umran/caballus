@@ -77,6 +77,7 @@ impl Engine {
 }
 
 impl Engine {
+    #[tracing::instrument(skip(self, tx))]
     async fn fetch_trip_for_update(
         &self,
         tx: &mut Transaction<'_, Database>,
@@ -91,6 +92,7 @@ impl Engine {
         Ok(trip)
     }
 
+    #[tracing::instrument(skip(self, tx))]
     async fn fetch_driver_for_update(
         &self,
         tx: &mut Transaction<'_, Database>,
@@ -107,6 +109,7 @@ impl Engine {
         Ok(driver)
     }
 
+    #[tracing::instrument(skip(self, tx))]
     async fn update_trip(
         &self,
         tx: &mut Transaction<'_, Database>,
@@ -123,6 +126,7 @@ impl Engine {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, tx))]
     async fn update_driver(
         &self,
         tx: &mut Transaction<'_, Database>,
@@ -344,6 +348,7 @@ impl TripAPI for Engine {
         let mut conn = self.pool.acquire().await?;
 
         // fetch trip
+        tracing::info!("fetching trip without lock");
         let Json(trip): Json<Trip> = conn
             .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
             .await?
@@ -351,6 +356,7 @@ impl TripAPI for Engine {
             .try_get("data")?;
 
         if !trip.is_searching() {
+            tracing::info!("trip is not in the SEARCHING state, returning early...");
             return Err(invalid_invocation_error());
         }
 
@@ -386,6 +392,8 @@ impl TripAPI for Engine {
                 ST_Distance(l.location, ST_SetSRID($1, 4326)) ASC
         ";
 
+        tracing::info!("fetching potential drivers...");
+
         let results = conn
             .fetch_all(
                 sqlx::query(query)
@@ -397,8 +405,20 @@ impl TripAPI for Engine {
             )
             .await?;
 
+        tracing::info!(
+            "iterating through drivers to find a driver that satisfies all conditions..."
+        );
+
         for result in results.iter() {
             let driver_id: Uuid = result.try_get("driver_id")?;
+
+            let span = tracing::span!(
+                tracing::Level::INFO,
+                "driver iteration",
+                driver_id = driver_id.to_string()
+            );
+
+            let _enter = span.enter();
 
             let mut tx = conn.begin().await?;
             let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
@@ -434,6 +454,8 @@ impl TripAPI for Engine {
                 FOR UPDATE
             ";
 
+            tracing::info!("fetching driver for update");
+
             let maybe_result = tx
                 .fetch_optional(
                     sqlx::query(query)
@@ -447,8 +469,15 @@ impl TripAPI for Engine {
                 .await?;
 
             if maybe_result.is_none() {
+                tracing::info!(
+                    "driver did not satisfy all conditions, moving on to next driver..."
+                );
                 continue;
             }
+
+            tracing::info!(
+                "driver satisfies all conditions, attempting to update trip and driver..."
+            );
 
             // note that unwrap will never panic because it is never called if maybe_result is none
             let result = maybe_result.unwrap();
@@ -463,8 +492,15 @@ impl TripAPI for Engine {
             self.update_trip(&mut tx, &trip).await?;
 
             tx.commit().await?;
+
+            tracing::info!("successfully requested driver, returning...");
+
             return Ok(Some(trip));
         }
+
+        tracing::info!(
+            "failed to request a driver as no drivers satisfied all conditions, returning..."
+        );
 
         Ok(None)
     }
