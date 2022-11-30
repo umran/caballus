@@ -3,13 +3,13 @@ use chrono::{Duration, Utc};
 use geo_types::Geometry;
 use geozero::wkb;
 use serde_json::json;
-use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row};
+use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::{
     api::{DriverAPI, LocationAPI, QuoteAPI, RouteAPI, TripAPI, API},
     entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip},
-    error::{invalid_input_error, Error},
+    error::{invalid_input_error, invalid_invocation_error, Error},
     external::google_maps,
 };
 
@@ -73,6 +73,70 @@ impl Engine {
         .await?;
 
         Ok(Self { pool })
+    }
+}
+
+impl Engine {
+    async fn fetch_trip_for_update(
+        &self,
+        tx: &mut Transaction<'_, Database>,
+        id: &Uuid,
+    ) -> Result<Trip, Error> {
+        let Json(trip): Json<Trip> = tx
+            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(id))
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        Ok(trip)
+    }
+
+    async fn fetch_driver_for_update(
+        &self,
+        tx: &mut Transaction<'_, Database>,
+        id: &Uuid,
+    ) -> Result<Driver, Error> {
+        let Json(driver): Json<Driver> = tx
+            .fetch_optional(
+                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(id),
+            )
+            .await?
+            .ok_or_else(|| invalid_input_error())?
+            .try_get("data")?;
+
+        Ok(driver)
+    }
+
+    async fn update_trip(
+        &self,
+        tx: &mut Transaction<'_, Database>,
+        trip: &Trip,
+    ) -> Result<(), Error> {
+        tx.execute(
+            sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
+                .bind(&trip.id)
+                .bind(trip.status_string())
+                .bind(Json(trip)),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update_driver(
+        &self,
+        tx: &mut Transaction<'_, Database>,
+        driver: &Driver,
+    ) -> Result<(), Error> {
+        tx.execute(
+            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
+                .bind(&driver.id)
+                .bind(driver.status_string())
+                .bind(Json(driver)),
+        )
+        .await?;
+
+        Ok(())
     }
 }
 
@@ -276,18 +340,19 @@ impl TripAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn request_driver(&self, id: Uuid) -> Result<Trip, Error> {
+    async fn request_driver(&self, id: Uuid) -> Result<Option<Trip>, Error> {
         let mut conn = self.pool.acquire().await?;
-        let mut tx = conn.begin().await?;
 
-        // fetch trip for update
-        let Json(mut trip): Json<Trip> = tx
-            .fetch_optional(
-                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&id),
-            )
+        // fetch trip
+        let Json(trip): Json<Trip> = conn
+            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
             .await?
             .ok_or_else(|| invalid_input_error())?
             .try_get("data")?;
+
+        if !trip.is_searching() {
+            return Err(invalid_invocation_error());
+        }
 
         let origin_location: Geometry<f64> = trip.route.origin.coordinates.clone().into();
         let trip_distance = trip.route.distance;
@@ -321,7 +386,7 @@ impl TripAPI for Engine {
                 ST_Distance(l.location, ST_SetSRID($1, 4326)) ASC
         ";
 
-        let results = tx
+        let results = conn
             .fetch_all(
                 sqlx::query(query)
                     .bind(wkb::Encode(origin_location.clone()))
@@ -334,6 +399,9 @@ impl TripAPI for Engine {
 
         for result in results.iter() {
             let driver_id: Uuid = result.try_get("driver_id")?;
+
+            let mut tx = conn.begin().await?;
+            let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
 
             // fetch driver for update
             let query = "
@@ -389,72 +457,30 @@ impl TripAPI for Engine {
             let fare: f64 = result.try_get("fare")?;
 
             driver.request(trip.id.clone())?;
+            trip.request_driver(driver_id.clone(), fare)?;
 
-            tx.execute(
-                sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
-                    .bind(&driver.id)
-                    .bind(driver.status_string())
-                    .bind(Json(&driver)),
-            )
-            .await?;
-
-            trip.request_driver(driver_id, fare)?;
-
-            tx.execute(
-                sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
-                    .bind(&trip.id)
-                    .bind(trip.status_string())
-                    .bind(Json(&trip)),
-            )
-            .await?;
+            self.update_driver(&mut tx, &driver).await?;
+            self.update_trip(&mut tx, &trip).await?;
 
             tx.commit().await?;
-            return Ok(trip);
+            return Ok(Some(trip));
         }
 
-        Ok(trip)
+        Ok(None)
     }
 
     async fn derequest_driver(&self, id: Uuid, rejected: bool) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
-        let Json(mut trip): Json<Trip> = tx
-            .fetch_optional(
-                sqlx::query("SELECT data FROM trips WHERE id = $1 FOR UPDATE").bind(&id),
-            )
-            .await?
-            .ok_or_else(|| invalid_input_error())?
-            .try_get("data")?;
-
+        let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
         let driver_id = trip.derequest_driver()?;
-
-        tx.execute(
-            sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
-                .bind(&trip.id)
-                .bind(trip.status_string())
-                .bind(Json(&trip)),
-        )
-        .await?;
-
-        // update driver
-        let Json(mut driver): Json<Driver> = tx
-            .fetch_optional(
-                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&driver_id),
-            )
-            .await?
-            .ok_or_else(|| invalid_input_error())?
-            .try_get("data")?;
+        let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
 
         driver.free()?;
 
-        tx.execute(
-            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
-                .bind(&driver.id)
-                .bind(&driver.status_string())
-                .bind(Json(&driver)),
-        )
-        .await?;
+        self.update_trip(&mut tx, &trip).await?;
+        self.update_driver(&mut tx, &driver).await?;
 
         if rejected {
             tx.execute(
@@ -545,23 +571,11 @@ impl DriverAPI for Engine {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
-        let Json(mut driver): Json<Driver> = tx
-            .fetch_optional(
-                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&id),
-            )
-            .await?
-            .ok_or_else(|| invalid_input_error())?
-            .try_get("data")?;
+        let mut driver = self.fetch_driver_for_update(&mut tx, &id).await?;
 
         driver.start()?;
 
-        tx.execute(
-            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
-                .bind(&id)
-                .bind(driver.status_string())
-                .bind(Json(&driver)),
-        )
-        .await?;
+        self.update_driver(&mut tx, &driver).await?;
 
         tx.commit().await?;
 
@@ -573,23 +587,11 @@ impl DriverAPI for Engine {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
-        let Json(mut driver): Json<Driver> = tx
-            .fetch_optional(
-                sqlx::query("SELECT data FROM drivers WHERE id = $1 FOR UPDATE").bind(&id),
-            )
-            .await?
-            .ok_or_else(|| invalid_input_error())?
-            .try_get("data")?;
+        let mut driver = self.fetch_driver_for_update(&mut tx, &id).await?;
 
         driver.stop()?;
 
-        tx.execute(
-            sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
-                .bind(&id)
-                .bind(driver.status_string())
-                .bind(Json(&driver)),
-        )
-        .await?;
+        self.update_driver(&mut tx, &driver).await?;
 
         tx.commit().await?;
 

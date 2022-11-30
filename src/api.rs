@@ -30,7 +30,7 @@ pub trait QuoteAPI {
 pub trait TripAPI {
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error>;
     async fn create_trip(&self, quote_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error>;
-    async fn request_driver(&self, id: Uuid) -> Result<Trip, Error>;
+    async fn request_driver(&self, id: Uuid) -> Result<Option<Trip>, Error>;
     async fn derequest_driver(&self, id: Uuid, rejected: bool) -> Result<Trip, Error>;
 }
 
