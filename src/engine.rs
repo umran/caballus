@@ -533,6 +533,23 @@ impl TripAPI for Engine {
 
         Ok(trip)
     }
+
+    async fn cancel_trip(&self, id: Uuid, is_passenger: bool) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
+        let freed_driver = trip.cancel(is_passenger)?;
+
+        if let Some(driver_id) = freed_driver {
+            let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
+            driver.free()?;
+        }
+
+        tx.commit().await?;
+
+        Ok(trip)
+    }
 }
 
 #[async_trait]

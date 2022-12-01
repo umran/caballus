@@ -138,46 +138,49 @@ impl Trip {
     }
 
     #[tracing::instrument]
-    pub fn cancel(&mut self, is_passenger: bool) -> Result<(), Error> {
-        let penalty_bearer = self.cancellation_result(is_passenger)?;
+    pub fn cancel(&mut self, is_passenger: bool) -> Result<Option<Uuid>, Error> {
+        let (penalty_bearer, freed_driver_id) = self.cancellation_result(is_passenger)?;
 
         self.status = Status::Cancelled { penalty_bearer };
-        Ok(())
+        Ok(freed_driver_id)
     }
 
     #[tracing::instrument]
-    fn cancellation_result(&self, is_passenger: bool) -> Result<Option<PenaltyBearer>, Error> {
+    fn cancellation_result(
+        &self,
+        is_passenger: bool,
+    ) -> Result<(Option<PenaltyBearer>, Option<Uuid>), Error> {
         match &self.status {
-            Status::Searching
-            | Status::PendingAssignment {
+            Status::Searching => Ok((None, None)),
+            Status::PendingAssignment {
                 deadline: _,
-                driver_id: _,
+                driver_id,
                 fare: _,
-            } => Ok(None),
+            } => Ok((None, Some(driver_id.clone()))),
             Status::DriverEnRoute { deadline } => match is_passenger {
                 true => {
                     if Utc::now() >= *deadline {
-                        return Ok(Some(PenaltyBearer::Driver));
+                        return Ok((Some(PenaltyBearer::Driver), self.driver_id.clone()));
                     }
 
-                    Ok(Some(PenaltyBearer::Passenger))
+                    Ok((Some(PenaltyBearer::Passenger), self.driver_id.clone()))
                 }
-                false => Ok(Some(PenaltyBearer::Driver)),
+                false => Ok((Some(PenaltyBearer::Driver), self.driver_id.clone())),
             },
             Status::DriverArrived { is_late, timestamp } => match is_passenger {
                 true => {
                     if *is_late {
-                        return Ok(Some(PenaltyBearer::Driver));
+                        return Ok((Some(PenaltyBearer::Driver), self.driver_id.clone()));
                     }
 
-                    Ok(Some(PenaltyBearer::Passenger))
+                    Ok((Some(PenaltyBearer::Passenger), self.driver_id.clone()))
                 }
                 false => {
                     if !*is_late && Utc::now() >= (*timestamp).add(Duration::minutes(5)) {
-                        return Ok(Some(PenaltyBearer::Passenger));
+                        return Ok((Some(PenaltyBearer::Passenger), self.driver_id.clone()));
                     }
 
-                    Ok(Some(PenaltyBearer::Driver))
+                    Ok((Some(PenaltyBearer::Driver), self.driver_id.clone()))
                 }
             },
             _ => Err(invalid_invocation_error()),
