@@ -118,7 +118,7 @@ impl Trip {
     }
 
     #[tracing::instrument]
-    pub fn assign_driver(&mut self) -> Result<(), Error> {
+    pub fn assign_driver(&mut self) -> Result<Uuid, Error> {
         match self.status {
             Status::PendingAssignment {
                 deadline: _,
@@ -128,10 +128,10 @@ impl Trip {
                 self.status = Status::DriverEnRoute {
                     deadline: Utc::now() + Duration::minutes(15),
                 };
-                self.driver_id = Some(driver_id);
+                self.driver_id = Some(driver_id.clone());
                 self.fare = Some(fare);
 
-                Ok(())
+                Ok(driver_id)
             }
             _ => Err(invalid_invocation_error()),
         }

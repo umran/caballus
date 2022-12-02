@@ -50,7 +50,7 @@ impl Engine {
             .await?;
 
         pool.execute("DROP TABLE IF EXISTS drivers CASCADE").await?;
-        pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, user_id UUID NOT NULL UNIQUE, status VARCHAR NOT NULL, data JSONB NOT NULL)")
+        pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
 
         pool.execute("DROP TABLE IF EXISTS driver_rates CASCADE")
@@ -505,12 +505,23 @@ impl TripAPI for Engine {
         Ok(None)
     }
 
-    async fn derequest_driver(&self, id: Uuid, rejected: bool) -> Result<Trip, Error> {
+    async fn derequest_driver(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
         let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
+
         let driver_id = trip.derequest_driver()?;
+
+        let mut rejected = false;
+        if let Some(user_id) = user_id {
+            if driver_id != user_id {
+                return Err(invalid_invocation_error());
+            }
+
+            rejected = true;
+        }
+
         let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
 
         driver.free()?;
@@ -534,11 +545,51 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    async fn cancel_trip(&self, id: Uuid, is_passenger: bool) -> Result<Trip, Error> {
+    async fn assign_driver(&self, id: Uuid, user_id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
         let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
+
+        let driver_id = trip.assign_driver()?;
+
+        if driver_id != user_id {
+            return Err(invalid_invocation_error());
+        }
+
+        let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
+
+        driver.assign()?;
+
+        self.update_trip(&mut tx, &trip).await?;
+        self.update_driver(&mut tx, &driver).await?;
+
+        tx.commit().await?;
+
+        Ok(trip)
+    }
+
+    async fn cancel_trip(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
+
+        let mut is_passenger = false;
+        if let Some(user_id) = user_id {
+            if trip.passenger_id == user_id {
+                is_passenger = true;
+            } else {
+                if let Some(driver_id) = trip.driver_id {
+                    if driver_id != user_id {
+                        return Err(invalid_invocation_error());
+                    }
+                } else {
+                    return Err(invalid_invocation_error());
+                }
+            }
+        }
+
         let freed_driver = trip.cancel(is_passenger)?;
 
         if let Some(driver_id) = freed_driver {
@@ -561,22 +612,9 @@ impl DriverAPI for Engine {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
-        let existing_record = tx
-            .fetch_optional(
-                sqlx::query("SELECT id FROM drivers WHERE user_id = $1 FOR UPDATE")
-                    .bind(&driver.user_id),
-            )
-            .await?;
-
-        if existing_record.is_some() {
-            tracing::info!("driver already exists for user_id: {:?}", &driver.user_id);
-            return Err(invalid_input_error());
-        }
-
         tx.execute(
-            sqlx::query("INSERT INTO drivers (id, user_id, status, data) VALUES ($1, $2, $3, $4)")
+            sqlx::query("INSERT INTO drivers (id, status, data) VALUES ($1, $2, $3)")
                 .bind(&driver.id)
-                .bind(&driver.user_id)
                 .bind(&driver.status_string())
                 .bind(Json(&driver)),
         )

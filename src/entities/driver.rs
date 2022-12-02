@@ -6,7 +6,6 @@ use crate::error::{invalid_invocation_error, Error};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Driver {
     pub id: Uuid,
-    pub user_id: Uuid,
     pub status: Status,
 }
 
@@ -22,8 +21,7 @@ pub enum Status {
 impl Driver {
     pub fn new(user_id: Uuid) -> Self {
         Self {
-            id: Uuid::new_v4(),
-            user_id,
+            id: user_id,
             status: Status::Idle,
         }
     }
