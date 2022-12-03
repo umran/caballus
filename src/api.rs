@@ -22,8 +22,8 @@ pub trait RouteAPI {
 
 #[async_trait]
 pub trait QuoteAPI {
-    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error>;
     async fn find_quote(&self, token: Uuid) -> Result<Quote, Error>;
+    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error>;
 }
 
 #[async_trait]
@@ -31,7 +31,12 @@ pub trait TripAPI {
     async fn find_trip(&self, id: Uuid) -> Result<Trip, Error>;
     async fn create_trip(&self, quote_token: Uuid, user_id: Uuid) -> Result<Trip, Error>;
     async fn request_driver(&self, id: Uuid) -> Result<Option<Trip>, Error>;
-    async fn derequest_driver(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error>;
+    async fn derequest_driver(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+        rejected: bool,
+    ) -> Result<Trip, Error>;
     async fn assign_driver(&self, id: Uuid, user_id: Uuid) -> Result<Trip, Error>;
     async fn cancel_trip(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error>;
 }
@@ -42,8 +47,9 @@ pub trait DriverAPI {
     async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error>;
     async fn start_driver(&self, id: Uuid) -> Result<Driver, Error>;
     async fn stop_driver(&self, id: Uuid) -> Result<Driver, Error>;
-    async fn update_driver_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error>;
+    async fn update_driver_location(&self, id: Uuid, coordinates: Coordinates)
+        -> Result<(), Error>;
     async fn update_driver_rate(&self, id: Uuid, min_fare: f64, rate: f64) -> Result<(), Error>;
 }
 
-pub trait API: LocationAPI + RouteAPI + TripAPI {}
+pub trait API: LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI {}

@@ -412,14 +412,6 @@ impl TripAPI for Engine {
         for result in results.iter() {
             let driver_id: Uuid = result.try_get("driver_id")?;
 
-            let span = tracing::span!(
-                tracing::Level::INFO,
-                "driver iteration",
-                driver_id = driver_id.to_string()
-            );
-
-            let _enter = span.enter();
-
             let mut tx = conn.begin().await?;
             let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
 
@@ -451,7 +443,7 @@ impl TripAPI for Engine {
                                 ST_Distance(l.location, ST_SetSRID($2, 4326)) + $3
                             )
                         ) <= $5
-                FOR UPDATE
+                FOR UPDATE OF d
             ";
 
             tracing::info!("fetching driver for update");
@@ -498,14 +490,19 @@ impl TripAPI for Engine {
             return Ok(Some(trip));
         }
 
-        tracing::info!(
+        tracing::warn!(
             "failed to request a driver as no drivers satisfied all conditions, returning..."
         );
 
         Ok(None)
     }
 
-    async fn derequest_driver(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error> {
+    async fn derequest_driver(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+        rejected: bool,
+    ) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
@@ -513,13 +510,8 @@ impl TripAPI for Engine {
 
         let driver_id = trip.derequest_driver()?;
 
-        let mut rejected = false;
-        if let Some(user_id) = user_id {
-            if driver_id != user_id {
-                return Err(invalid_invocation_error());
-            }
-
-            rejected = true;
+        if driver_id != user_id {
+            return Err(invalid_invocation_error());
         }
 
         let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
@@ -536,8 +528,10 @@ impl TripAPI for Engine {
                     .bind(&driver.id),
             )
             .await?;
-        } else {
+
             tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
+        } else {
+            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = LEAST(1, priority + 1) WHERE driver_id = $1").bind(&driver.id)).await?;
         }
 
         tx.commit().await?;
@@ -563,6 +557,8 @@ impl TripAPI for Engine {
 
         self.update_trip(&mut tx, &trip).await?;
         self.update_driver(&mut tx, &driver).await?;
+
+        tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
 
         tx.commit().await?;
 
@@ -592,9 +588,13 @@ impl TripAPI for Engine {
 
         let freed_driver = trip.cancel(is_passenger)?;
 
+        self.update_trip(&mut tx, &trip).await?;
+
         if let Some(driver_id) = freed_driver {
             let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
             driver.free()?;
+
+            self.update_driver(&mut tx, &driver).await?;
         }
 
         tx.commit().await?;
@@ -690,17 +690,21 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn update_driver_location(&self, id: Uuid, location: Coordinates) -> Result<(), Error> {
+    async fn update_driver_location(
+        &self,
+        id: Uuid,
+        coordinates: Coordinates,
+    ) -> Result<(), Error> {
         let mut conn = self.pool.acquire().await?;
 
-        let location: Geometry<f64> = location.into();
+        let coordinates: Geometry<f64> = coordinates.into();
 
         conn.execute(
             sqlx::query(
                 "UPDATE driver_locations SET location = ST_SetSRID($2, 4326), expiry = $3 WHERE driver_id = $1",
             )
             .bind(&id)
-            .bind(wkb::Encode(location))
+            .bind(wkb::Encode(coordinates))
             .bind(Utc::now() + Duration::seconds(60)),
         )
         .await?;
