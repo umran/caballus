@@ -82,6 +82,26 @@ impl Engine {
 }
 
 impl Engine {
+    fn authorize<Actor, Action, Resource>(
+        &self,
+        actor: Actor,
+        action: Action,
+        resource: Resource,
+    ) -> Result<(), Error>
+    where
+        Actor: oso::ToPolar,
+        Action: oso::ToPolar,
+        Resource: oso::ToPolar,
+    {
+        if self.authorizor.is_allowed(actor, action, resource)? {
+            return Ok(());
+        }
+
+        Err(unauthorized_error())
+    }
+}
+
+impl Engine {
     #[tracing::instrument(skip(self, tx))]
     async fn fetch_trip_for_update(
         &self,
@@ -177,26 +197,6 @@ impl Engine {
             tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
         } else {
             tx.execute(sqlx::query("UPDATE driver_priorities SET priority = LEAST(1, priority + 1) WHERE driver_id = $1").bind(&driver.id)).await?;
-        }
-
-        Ok(())
-    }
-}
-
-impl Engine {
-    fn authorize<Actor, Action, Resource>(
-        &self,
-        actor: Actor,
-        action: Action,
-        resource: Resource,
-    ) -> Result<(), Error>
-    where
-        Actor: oso::ToPolar,
-        Action: oso::ToPolar,
-        Resource: oso::ToPolar,
-    {
-        if !self.authorizor.is_allowed(actor, action, resource)? {
-            return Err(unauthorized_error());
         }
 
         Ok(())
