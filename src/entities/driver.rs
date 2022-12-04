@@ -92,11 +92,10 @@ impl Driver {
         match self.status {
             Status::Requested { trip_id: _ } | Status::Assigned { trip_id: _ } => {
                 self.status = Status::Available;
+                Ok(())
             }
-            _ => (),
-        };
-
-        Ok(())
+            _ => Err(invalid_invocation_error()),
+        }
     }
 
     #[tracing::instrument]
@@ -104,11 +103,10 @@ impl Driver {
         match self.status {
             Status::Idle => {
                 self.status = Status::Available;
+                Ok(())
             }
-            _ => (),
-        };
-
-        Ok(())
+            _ => Err(invalid_invocation_error()),
+        }
     }
 
     #[tracing::instrument]

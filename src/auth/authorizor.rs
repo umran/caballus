@@ -16,231 +16,226 @@ pub fn new() -> Oso {
     o
 }
 
-#[test]
-fn platform_trip_relation_test() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     use crate::entities::{Coordinates, Location, Route, Trip};
     use uuid::Uuid;
 
-    let authorizor = new();
+    fn new_trip(passenger_id: Uuid) -> Trip {
+        let origin = Location::new(Coordinates { lat: 0.0, lng: 0.0 }, "".into());
+        let destination = origin.clone();
+        let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
+        Trip::new(passenger_id, route, 100.0)
+    }
 
-    let origin = Location::new(Coordinates { lat: 0.0, lng: 0.0 }, "".into());
-    let destination = origin.clone();
-    let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
-    let trip = Trip::new(Uuid::new_v4(), route, 100.0);
+    #[test]
+    fn platform_trip_relation_test() {
+        let authorizor = new();
 
-    let result = authorizor.query_rule(
-        "has_relation",
-        (Platform::default(), "platform", trip.clone()),
-    );
-    assert!(result.unwrap().next().unwrap().is_ok());
-}
+        let trip = new_trip(Uuid::new_v4());
 
-#[test]
-fn platform_role_test() {
-    use uuid::Uuid;
+        let result = authorizor.query_rule(
+            "has_relation",
+            (Platform::default(), "platform", trip.clone()),
+        );
+        assert!(result.unwrap().next().unwrap().is_ok());
+    }
 
-    let authorizor = new();
+    #[test]
+    fn platform_role_test() {
+        use uuid::Uuid;
 
-    let system = User {
-        id: Uuid::new_v4(),
-        roles: vec!["system".into()],
-    };
+        let authorizor = new();
 
-    let result = authorizor.query_rule("has_role", (system.clone(), "system", Platform::default()));
-    assert!(result.unwrap().next().unwrap().is_ok());
-}
+        let system = User {
+            id: Uuid::new_v4(),
+            roles: vec!["system".into()],
+        };
 
-#[test]
-fn trip_passenger_role_test() {
-    use crate::entities::{Coordinates, Location, Route, Trip};
-    use uuid::Uuid;
+        let result =
+            authorizor.query_rule("has_role", (system.clone(), "system", Platform::default()));
+        assert!(result.unwrap().next().unwrap().is_ok());
+    }
 
-    let authorizor = new();
+    #[test]
+    fn trip_passenger_role_test() {
+        let authorizor = new();
 
-    let passenger = User {
-        id: Uuid::new_v4(),
-        roles: vec![],
-    };
+        let passenger = User {
+            id: Uuid::new_v4(),
+            roles: vec![],
+        };
 
-    let origin = Location::new(Coordinates { lat: 0.0, lng: 0.0 }, "".into());
-    let destination = origin.clone();
-    let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
-    let trip = Trip::new(passenger.id.clone(), route, 100.0);
+        let trip = new_trip(passenger.id.clone());
 
-    let result = authorizor.query_rule("has_role", (passenger.clone(), "passenger", trip.clone()));
-    assert!(result.unwrap().next().unwrap().is_ok());
+        let result =
+            authorizor.query_rule("has_role", (passenger.clone(), "passenger", trip.clone()));
+        assert!(result.unwrap().next().unwrap().is_ok());
 
-    let result = authorizor.is_allowed(passenger.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(passenger.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(passenger.clone(), "cancel", trip.clone());
-    assert_eq!(result.unwrap(), true);
-}
+        let result = authorizor.is_allowed(passenger.clone(), "cancel", trip.clone());
+        assert_eq!(result.unwrap(), true);
+    }
 
-#[test]
-fn trip_driver_candidate_and_driver_role_test() {
-    use crate::entities::{Coordinates, Location, Route, Trip};
-    use uuid::Uuid;
+    #[test]
+    fn trip_driver_candidate_and_driver_role_test() {
+        let authorizor = new();
 
-    let authorizor = new();
+        let driver = User {
+            id: Uuid::new_v4(),
+            roles: vec![],
+        };
 
-    let driver = User {
-        id: Uuid::new_v4(),
-        roles: vec![],
-    };
+        let mut trip = new_trip(Uuid::new_v4());
 
-    let origin = Location::new(Coordinates { lat: 0.0, lng: 0.0 }, "".into());
-    let destination = origin.clone();
-    let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
-    let mut trip = Trip::new(Uuid::new_v4(), route, 100.0);
+        // before driver is requested
 
-    // before driver is requested
+        let result = authorizor.query_rule(
+            "has_role",
+            (driver.clone(), "driver_candidate", trip.clone()),
+        );
+        assert!(result.unwrap().next().is_none());
 
-    let result = authorizor.query_rule(
-        "has_role",
-        (driver.clone(), "driver_candidate", trip.clone()),
-    );
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
+        assert!(result.unwrap().next().is_none());
 
-    let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        trip.request_driver(driver.id.clone(), 100.0).unwrap();
 
-    trip.request_driver(driver.id.clone(), 100.0).unwrap();
+        // after driver is requested and before driver is assigned
 
-    // after driver is requested and before driver is assigned
+        let result = authorizor.query_rule(
+            "has_role",
+            (driver.clone(), "driver_candidate", trip.clone()),
+        );
+        assert!(result.unwrap().next().unwrap().is_ok());
 
-    let result = authorizor.query_rule(
-        "has_role",
-        (driver.clone(), "driver_candidate", trip.clone()),
-    );
-    assert!(result.unwrap().next().unwrap().is_ok());
+        let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
+        assert!(result.unwrap().next().is_none());
 
-    let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        trip.assign_driver().unwrap();
 
-    trip.assign_driver().unwrap();
+        // after driver is assigned
 
-    // after driver is assigned
+        let result = authorizor.query_rule(
+            "has_role",
+            (driver.clone(), "driver_candidate", trip.clone()),
+        );
+        assert!(result.unwrap().next().is_none());
 
-    let result = authorizor.query_rule(
-        "has_role",
-        (driver.clone(), "driver_candidate", trip.clone()),
-    );
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
+        assert!(result.unwrap().next().unwrap().is_ok());
 
-    let result = authorizor.query_rule("has_role", (driver.clone(), "driver", trip.clone()));
-    assert!(result.unwrap().next().unwrap().is_ok());
+        let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(driver.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "accept", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(driver.clone(), "reject", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
+        assert_eq!(result.unwrap(), true);
+    }
 
-    let result = authorizor.is_allowed(driver.clone(), "cancel", trip.clone());
-    assert_eq!(result.unwrap(), true);
-}
+    #[test]
+    fn trip_system_role_test() {
+        let authorizor = new();
 
-#[test]
-fn trip_system_role_test() {
-    use crate::entities::{Coordinates, Location, Route, Trip};
-    use uuid::Uuid;
+        let unprivileged = User {
+            id: Uuid::new_v4(),
+            roles: vec![],
+        };
 
-    let authorizor = new();
+        let system = User {
+            id: Uuid::new_v4(),
+            roles: vec!["system".into()],
+        };
 
-    let unprivileged = User {
-        id: Uuid::new_v4(),
-        roles: vec![],
-    };
+        let mut trip = new_trip(Uuid::new_v4());
 
-    let system = User {
-        id: Uuid::new_v4(),
-        roles: vec!["system".into()],
-    };
+        // before request driver
 
-    let origin = Location::new(Coordinates { lat: 0.0, lng: 0.0 }, "".into());
-    let destination = origin.clone();
-    let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
-    let mut trip = Trip::new(Uuid::new_v4(), route, 100.0);
+        let result =
+            authorizor.query_rule("has_role", (unprivileged.clone(), "system", trip.clone()));
+        assert!(result.unwrap().next().is_none());
 
-    // before request driver
+        let result = authorizor.query_rule("has_role", (system.clone(), "system", trip.clone()));
+        assert!(result.unwrap().next().unwrap().is_ok());
 
-    let result = authorizor.query_rule("has_role", (unprivileged.clone(), "system", trip.clone()));
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.is_allowed(unprivileged.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.query_rule("has_role", (system.clone(), "system", trip.clone()));
-    assert!(result.unwrap().next().unwrap().is_ok());
+        let result = authorizor.is_allowed(unprivileged.clone(), "request_driver", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(unprivileged.clone(), "release_driver", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "request_driver", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(system.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "release_driver", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(system.clone(), "request_driver", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(system.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(system.clone(), "release_driver", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(system.clone(), "request_driver", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        trip.request_driver(Uuid::new_v4(), 100.0).unwrap();
 
-    let result = authorizor.is_allowed(system.clone(), "release_driver", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        // after request driver
 
-    trip.request_driver(Uuid::new_v4(), 100.0).unwrap();
+        let result =
+            authorizor.query_rule("has_role", (unprivileged.clone(), "system", trip.clone()));
+        assert!(result.unwrap().next().is_none());
 
-    // after request driver
+        let result = authorizor.query_rule("has_role", (system.clone(), "system", trip.clone()));
+        assert!(result.unwrap().next().unwrap().is_ok());
 
-    let result = authorizor.query_rule("has_role", (unprivileged.clone(), "system", trip.clone()));
-    assert!(result.unwrap().next().is_none());
+        let result = authorizor.is_allowed(unprivileged.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.query_rule("has_role", (system.clone(), "system", trip.clone()));
-    assert!(result.unwrap().next().unwrap().is_ok());
+        let result = authorizor.is_allowed(unprivileged.clone(), "request_driver", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(unprivileged.clone(), "release_driver", trip.clone());
+        assert_eq!(result.unwrap(), false);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "request_driver", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(system.clone(), "read", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(unprivileged.clone(), "release_driver", trip.clone());
-    assert_eq!(result.unwrap(), false);
+        let result = authorizor.is_allowed(system.clone(), "request_driver", trip.clone());
+        assert_eq!(result.unwrap(), true);
 
-    let result = authorizor.is_allowed(system.clone(), "read", trip.clone());
-    assert_eq!(result.unwrap(), true);
-
-    let result = authorizor.is_allowed(system.clone(), "request_driver", trip.clone());
-    assert_eq!(result.unwrap(), true);
-
-    let result = authorizor.is_allowed(system.clone(), "release_driver", trip.clone());
-    assert_eq!(result.unwrap(), true);
+        let result = authorizor.is_allowed(system.clone(), "release_driver", trip.clone());
+        assert_eq!(result.unwrap(), true);
+    }
 }
