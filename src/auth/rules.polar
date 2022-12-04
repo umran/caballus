@@ -15,14 +15,14 @@ resource Platform {
     "create_trip" if "passenger";
 }
 
-has_role(user: User, name: String, _: Platform) if
-    role in user.roles and
-    role = name;
+has_role(user: User, role: String, platform: Platform) if
+    user.has_role(role) and
+    platform.id = Platform.default().id;
 
 resource Trip {
     permissions = ["read", "request_driver", "release_driver", "accept", "reject", "cancel"];
     roles = ["passenger", "driver_candidate", "driver", "system"];
-    relations = { parent: Platform };
+    relations = { platform: Platform };
 
     "read" if "passenger";
     "cancel" if "passenger";
@@ -37,11 +37,10 @@ resource Trip {
     "read" if "system";
     "request_driver" if "system";
     "release_driver" if "system";
-
-    "system" if "system" on "parent";
 }
 
-has_relation(_: Platform, "parent", _: Trip);
+has_relation(platform: Platform, "platform", _: Trip) if
+    platform.id = Platform.default().id;
 
 has_role(user: User, "passenger", trip: Trip) if
     user.id = trip.passenger_id;
@@ -52,4 +51,7 @@ has_role(user: User, "driver_candidate", trip: Trip) if
 
 has_role(user: User, "driver", trip: Trip) if
     user.id_equals_nullable_id(trip.driver_id);
-        
+
+has_role(user: User, "system", trip: Trip) if
+    has_role(user, "system", Platform.default()) and
+    has_relation(Platform.default(), "platform", trip);
