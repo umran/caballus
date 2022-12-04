@@ -1,20 +1,25 @@
 use std::ops::Add;
 
 use chrono::{DateTime, Duration, Utc};
+use oso::PolarClass;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::Route;
 use crate::error::{invalid_invocation_error, Error};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PolarClass)]
 pub struct Trip {
+    #[polar(attribute)]
     pub id: Uuid,
+    #[polar(attribute)]
     pub status: Status,
+    #[polar(attribute)]
     pub passenger_id: Uuid,
     pub route: Route,
     pub max_fare: f64,
     pub fare: Option<f64>,
+    #[polar(attribute)]
     pub driver_id: Option<Uuid>,
 }
 
@@ -47,6 +52,47 @@ pub enum PenaltyBearer {
     Driver,
 }
 
+impl Status {
+    pub fn name(&self) -> String {
+        match self {
+            Status::Searching => "SEARCHING".to_string(),
+            Status::PendingAssignment {
+                deadline: _,
+                driver_id: _,
+                fare: _,
+            } => "PENDING_ASSIGNMENT".to_string(),
+            Status::DriverEnRoute { deadline: _ } => "DRIVER_EN_ROUTE".to_string(),
+            Status::DriverArrived {
+                is_late: _,
+                timestamp: _,
+            } => "DRIVER_ARRIVED".to_string(),
+            Status::Cancelled { penalty_bearer: _ } => "CANCELLED".to_string(),
+            Status::Completed => "COMPLETED".to_string(),
+        }
+    }
+}
+
+impl PolarClass for Status {
+    fn get_polar_class_builder() -> oso::ClassBuilder<Status> {
+        oso::Class::builder()
+            .name("TripStatus")
+            .add_attribute_getter("name", |recv: &Status| recv.name())
+            .add_attribute_getter("driver_id", |recv: &Status| match recv {
+                Status::PendingAssignment {
+                    deadline: _,
+                    driver_id,
+                    fare: _,
+                } => Some(driver_id.clone()),
+                _ => None,
+            })
+    }
+
+    fn get_polar_class() -> oso::Class {
+        let builder = Status::get_polar_class_builder();
+        builder.build()
+    }
+}
+
 impl Trip {
     pub fn new(passenger_id: Uuid, route: Route, max_fare: f64) -> Self {
         let status = Status::Searching;
@@ -59,24 +105,6 @@ impl Trip {
             max_fare,
             fare: None,
             driver_id: None,
-        }
-    }
-
-    pub fn status_string(&self) -> String {
-        match self.status {
-            Status::Searching => "SEARCHING".to_string(),
-            Status::PendingAssignment {
-                deadline: _,
-                driver_id: _,
-                fare: _,
-            } => "PENDING_CONFIRMATION".to_string(),
-            Status::DriverEnRoute { deadline: _ } => "DRIVER_EN_ROUTE".to_string(),
-            Status::DriverArrived {
-                is_late: _,
-                timestamp: _,
-            } => "DRIVER_ARRIVED".to_string(),
-            Status::Cancelled { penalty_bearer: _ } => "CANCELLED".to_string(),
-            Status::Completed => "COMPLETED".to_string(),
         }
     }
 
@@ -103,7 +131,7 @@ impl Trip {
     }
 
     #[tracing::instrument]
-    pub fn derequest_driver(&mut self) -> Result<Uuid, Error> {
+    pub fn release_driver(&mut self) -> Result<Uuid, Error> {
         match self.status {
             Status::PendingAssignment {
                 deadline: _,

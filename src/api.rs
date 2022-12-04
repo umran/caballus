@@ -1,55 +1,63 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use crate::auth::User;
 use crate::entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip};
 use crate::error::Error;
 
 #[async_trait]
 pub trait LocationAPI {
-    async fn find_location(&self, token: Uuid) -> Result<Location, Error>;
-    async fn create_location(&self, source: LocationSource) -> Result<Location, Error>;
+    async fn create_location(&self, user: User, source: LocationSource) -> Result<Location, Error>;
+    async fn find_location(&self, user: User, token: Uuid) -> Result<Location, Error>;
 }
 
 #[async_trait]
 pub trait RouteAPI {
-    async fn find_route(&self, token: Uuid) -> Result<Route, Error>;
     async fn create_route(
         &self,
+        user: User,
         origin_token: Uuid,
         destination_token: Uuid,
     ) -> Result<Route, Error>;
+    async fn find_route(&self, user: User, token: Uuid) -> Result<Route, Error>;
 }
 
 #[async_trait]
 pub trait QuoteAPI {
-    async fn find_quote(&self, token: Uuid) -> Result<Quote, Error>;
-    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error>;
+    async fn create_quote(&self, user: User, route_token: Uuid) -> Result<Option<Quote>, Error>;
+    async fn find_quote(&self, user: User, token: Uuid) -> Result<Quote, Error>;
 }
 
 #[async_trait]
 pub trait TripAPI {
-    async fn find_trip(&self, id: Uuid) -> Result<Trip, Error>;
-    async fn create_trip(&self, quote_token: Uuid, user_id: Uuid) -> Result<Trip, Error>;
-    async fn request_driver(&self, id: Uuid) -> Result<Option<Trip>, Error>;
-    async fn derequest_driver(
-        &self,
-        id: Uuid,
-        user_id: Uuid,
-        rejected: bool,
-    ) -> Result<Trip, Error>;
-    async fn assign_driver(&self, id: Uuid, user_id: Uuid) -> Result<Trip, Error>;
-    async fn cancel_trip(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error>;
+    async fn create_trip(&self, user: User, quote_token: Uuid) -> Result<Trip, Error>;
+    async fn find_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
+    async fn request_driver(&self, user: User, id: Uuid) -> Result<Option<Trip>, Error>;
+    async fn release_driver(&self, user: User, id: Uuid, driver_id: Uuid) -> Result<Trip, Error>;
+    async fn accept_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
+    async fn reject_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
+    async fn cancel_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
 }
 
 #[async_trait]
 pub trait DriverAPI {
-    async fn find_driver(&self, id: Uuid) -> Result<Driver, Error>;
-    async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error>;
-    async fn start_driver(&self, id: Uuid) -> Result<Driver, Error>;
-    async fn stop_driver(&self, id: Uuid) -> Result<Driver, Error>;
-    async fn update_driver_location(&self, id: Uuid, coordinates: Coordinates)
-        -> Result<(), Error>;
-    async fn update_driver_rate(&self, id: Uuid, min_fare: f64, rate: f64) -> Result<(), Error>;
+    async fn create_driver(&self, user: User) -> Result<Driver, Error>;
+    async fn find_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
+    async fn start_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
+    async fn stop_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
+    async fn update_driver_location(
+        &self,
+        user: User,
+        id: Uuid,
+        coordinates: Coordinates,
+    ) -> Result<(), Error>;
+    async fn update_driver_rate(
+        &self,
+        user: User,
+        id: Uuid,
+        min_fare: f64,
+        rate: f64,
+    ) -> Result<(), Error>;
 }
 
 pub trait API: LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI {}

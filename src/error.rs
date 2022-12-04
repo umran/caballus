@@ -29,9 +29,16 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+impl From<oso::OsoError> for Error {
+    fn from(err: oso::OsoError) -> Self {
+        oso_error(err)
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, message) = match self.code {
+            200 => (StatusCode::UNAUTHORIZED, self.message.as_str()),
             0..=99 => (StatusCode::INTERNAL_SERVER_ERROR, "internal server error"),
             _ => (StatusCode::BAD_REQUEST, self.message.as_str()),
         };
@@ -63,11 +70,20 @@ pub fn reqwest_error(err: reqwest::Error) -> Error {
     }
 }
 
+pub fn oso_error(err: oso::OsoError) -> Error {
+    tracing::error!("oso error: {:?}", err);
+
+    Error {
+        code: 4,
+        message: "oso error".into(),
+    }
+}
+
 pub fn env_var_error(err: env::VarError) -> Error {
     tracing::warn!("env var error: {:?}", err);
 
     Error {
-        code: 4,
+        code: 5,
         message: "environment variable error".into(),
     }
 }
@@ -76,7 +92,7 @@ pub fn upstream_error() -> Error {
     tracing::warn!("upstream error");
 
     Error {
-        code: 5,
+        code: 6,
         message: "upstream error".into(),
     }
 }
@@ -96,5 +112,14 @@ pub fn invalid_input_error() -> Error {
     Error {
         code: 101,
         message: "invalid input error".into(),
+    }
+}
+
+pub fn unauthorized_error() -> Error {
+    tracing::info!("unauthorized error");
+
+    Error {
+        code: 200,
+        message: "unauthorized error".into(),
     }
 }

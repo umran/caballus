@@ -1,11 +1,14 @@
+use oso::PolarClass;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{invalid_invocation_error, Error};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PolarClass)]
 pub struct Driver {
+    #[polar(attribute)]
     pub id: Uuid,
+    #[polar(attribute)]
     pub status: Status,
 }
 
@@ -18,20 +21,41 @@ pub enum Status {
     Assigned { trip_id: Uuid },
 }
 
+impl Status {
+    pub fn name(&self) -> String {
+        match self {
+            Status::Idle => "IDLE".into(),
+            Status::Available => "AVAILABLE".into(),
+            Status::Requested { trip_id: _ } => "REQUESTED".into(),
+            Status::Assigned { trip_id: _ } => "ASSIGNED".into(),
+        }
+    }
+}
+
+impl PolarClass for Status {
+    fn get_polar_class_builder() -> oso::ClassBuilder<Status> {
+        oso::Class::builder()
+            .name("DriverStatus")
+            .add_attribute_getter("name", |recv: &Status| recv.name())
+            .add_attribute_getter("trip_id", |recv: &Status| match recv {
+                Status::Requested { trip_id } | Status::Assigned { trip_id } => {
+                    Some(trip_id.clone())
+                }
+                _ => None,
+            })
+    }
+
+    fn get_polar_class() -> oso::Class {
+        let builder = Status::get_polar_class_builder();
+        builder.build()
+    }
+}
+
 impl Driver {
     pub fn new(user_id: Uuid) -> Self {
         Self {
             id: user_id,
             status: Status::Idle,
-        }
-    }
-
-    pub fn status_string(&self) -> String {
-        match self.status {
-            Status::Idle => "IDLE".into(),
-            Status::Available => "AVAILABLE".into(),
-            Status::Requested { trip_id: _ } => "REQUESTED".into(),
-            Status::Assigned { trip_id: _ } => "ASSIGNED".into(),
         }
     }
 

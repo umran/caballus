@@ -2,22 +2,24 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use geo_types::Geometry;
 use geozero::wkb;
+use oso::Oso;
 use serde_json::json;
 use sqlx::{types::Json, Acquire, Executor, Pool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::{
     api::{DriverAPI, LocationAPI, QuoteAPI, RouteAPI, TripAPI, API},
+    auth::{authorizor, Platform, User},
     entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip},
-    error::{invalid_input_error, invalid_invocation_error, Error},
+    error::{invalid_input_error, invalid_invocation_error, unauthorized_error, Error},
     external::google_maps,
 };
 
 type Database = Postgres;
 
-#[derive(Debug)]
 pub struct Engine {
     pool: Pool<Database>,
+    authorizor: Oso,
 }
 
 impl Engine {
@@ -72,7 +74,10 @@ impl Engine {
         )
         .await?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            authorizor: authorizor::new(),
+        })
     }
 }
 
@@ -118,7 +123,7 @@ impl Engine {
         tx.execute(
             sqlx::query("UPDATE trips SET status = $2, data = $3 WHERE id = $1")
                 .bind(&trip.id)
-                .bind(trip.status_string())
+                .bind(trip.status.name())
                 .bind(Json(trip)),
         )
         .await?;
@@ -135,10 +140,64 @@ impl Engine {
         tx.execute(
             sqlx::query("UPDATE drivers SET status = $2, data = $3 WHERE id = $1")
                 .bind(&driver.id)
-                .bind(driver.status_string())
+                .bind(driver.status.name())
                 .bind(Json(driver)),
         )
         .await?;
+
+        Ok(())
+    }
+
+    async fn _release_driver(
+        &self,
+        tx: &mut Transaction<'_, Database>,
+        trip: &mut Trip,
+        driver_id: Uuid,
+        rejection: bool,
+    ) -> Result<(), Error> {
+        if trip.release_driver()? != driver_id {
+            return Err(invalid_invocation_error());
+        }
+
+        let mut driver = self.fetch_driver_for_update(tx, &driver_id).await?;
+
+        self.update_trip(tx, &trip).await?;
+        driver.free()?;
+
+        self.update_driver(tx, &driver).await?;
+
+        if rejection {
+            tx.execute(
+                sqlx::query("INSERT INTO trip_rejections (trip_id, driver_id) VALUES ($1, $2)")
+                    .bind(&trip.id)
+                    .bind(&driver.id),
+            )
+            .await?;
+
+            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
+        } else {
+            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = LEAST(1, priority + 1) WHERE driver_id = $1").bind(&driver.id)).await?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Engine {
+    fn authorize<Actor, Action, Resource>(
+        &self,
+        actor: Actor,
+        action: Action,
+        resource: Resource,
+    ) -> Result<(), Error>
+    where
+        Actor: oso::ToPolar,
+        Action: oso::ToPolar,
+        Resource: oso::ToPolar,
+    {
+        if !self.authorizor.is_allowed(actor, action, resource)? {
+            return Err(unauthorized_error());
+        }
 
         Ok(())
     }
@@ -147,7 +206,7 @@ impl Engine {
 #[async_trait]
 impl LocationAPI for Engine {
     #[tracing::instrument(skip(self))]
-    async fn create_location(&self, source: LocationSource) -> Result<Location, Error> {
+    async fn create_location(&self, user: User, source: LocationSource) -> Result<Location, Error> {
         let location: Location = match source {
             LocationSource::Coordinates(coordinates) => Location::new(coordinates, "".into()),
             LocationSource::GooglePlaces {
@@ -172,7 +231,7 @@ impl LocationAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn find_location(&self, token: Uuid) -> Result<Location, Error> {
+    async fn find_location(&self, user: User, token: Uuid) -> Result<Location, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -191,11 +250,12 @@ impl RouteAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn create_route(
         &self,
+        user: User,
         origin_token: Uuid,
         destination_token: Uuid,
     ) -> Result<Route, Error> {
-        let origin = self.find_location(origin_token).await?;
-        let destination = self.find_location(destination_token).await?;
+        let origin = self.find_location(user.clone(), origin_token).await?;
+        let destination = self.find_location(user.clone(), destination_token).await?;
 
         let route = Route::new(origin, destination, json!(""), 4500.0);
 
@@ -211,7 +271,7 @@ impl RouteAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn find_route(&self, token: Uuid) -> Result<Route, Error> {
+    async fn find_route(&self, user: User, token: Uuid) -> Result<Route, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -228,8 +288,8 @@ impl RouteAPI for Engine {
 #[async_trait]
 impl QuoteAPI for Engine {
     #[tracing::instrument(skip(self))]
-    async fn create_quote(&self, route_token: Uuid) -> Result<Option<Quote>, Error> {
-        let route = self.find_route(route_token).await?;
+    async fn create_quote(&self, user: User, route_token: Uuid) -> Result<Option<Quote>, Error> {
+        let route = self.find_route(user.clone(), route_token).await?;
 
         let origin_location: Geometry<f64> = route.origin.coordinates.clone().into();
         let search_radius = 2000.0;
@@ -291,7 +351,7 @@ impl QuoteAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn find_quote(&self, quote_token: Uuid) -> Result<Quote, Error> {
+    async fn find_quote(&self, user: User, quote_token: Uuid) -> Result<Quote, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let maybe_result = conn
@@ -310,22 +370,11 @@ impl QuoteAPI for Engine {
 #[async_trait]
 impl TripAPI for Engine {
     #[tracing::instrument(skip(self))]
-    async fn find_trip(&self, id: Uuid) -> Result<Trip, Error> {
-        let mut conn = self.pool.acquire().await?;
+    async fn create_trip(&self, user: User, quote_token: Uuid) -> Result<Trip, Error> {
+        self.authorize(user.clone(), "create_trip", Platform::default())?;
 
-        let maybe_result = conn
-            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
-            .await?;
-
-        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
-        let Json(trip) = result.try_get("data")?;
-
-        Ok(trip)
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn create_trip(&self, quote_token: Uuid, passenger_id: Uuid) -> Result<Trip, Error> {
-        let quote = self.find_quote(quote_token).await?;
+        let passenger_id = user.id;
+        let quote = self.find_quote(user.clone(), quote_token).await?;
         let trip = Trip::new(passenger_id, quote.route, quote.max_fare);
 
         let mut conn = self.pool.acquire().await?;
@@ -335,7 +384,7 @@ impl TripAPI for Engine {
         conn.execute(
             sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
                 .bind(&trip.id)
-                .bind(&trip.status_string())
+                .bind(&trip.status.name())
                 .bind(Json(&trip)),
         )
         .await?;
@@ -344,7 +393,23 @@ impl TripAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn request_driver(&self, id: Uuid) -> Result<Option<Trip>, Error> {
+    async fn find_trip(&self, user: User, id: Uuid) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+
+        let maybe_result = conn
+            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
+            .await?;
+
+        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let Json(trip): Json<Trip> = result.try_get("data")?;
+
+        self.authorize(user.clone(), "read", trip.clone())?;
+
+        Ok(trip)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn request_driver(&self, user: User, id: Uuid) -> Result<Option<Trip>, Error> {
         let mut conn = self.pool.acquire().await?;
 
         // fetch trip
@@ -354,6 +419,9 @@ impl TripAPI for Engine {
             .await?
             .ok_or_else(|| invalid_input_error())?
             .try_get("data")?;
+
+        // it's safe to perform the authorization check without locking on trip
+        self.authorize(user.clone(), "request_driver", trip.clone())?;
 
         if !trip.is_searching() {
             tracing::info!("trip is not in the SEARCHING state, returning early...");
@@ -497,61 +565,33 @@ impl TripAPI for Engine {
         Ok(None)
     }
 
-    async fn derequest_driver(
-        &self,
-        id: Uuid,
-        user_id: Uuid,
-        rejected: bool,
-    ) -> Result<Trip, Error> {
+    async fn release_driver(&self, user: User, id: Uuid, driver_id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
         let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
 
-        let driver_id = trip.derequest_driver()?;
+        self.authorize(user.clone(), "release_driver", trip.clone())?;
 
-        if driver_id != user_id {
-            return Err(invalid_invocation_error());
-        }
-
-        let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
-
-        driver.free()?;
-
-        self.update_trip(&mut tx, &trip).await?;
-        self.update_driver(&mut tx, &driver).await?;
-
-        if rejected {
-            tx.execute(
-                sqlx::query("INSERT INTO trip_rejections (trip_id, driver_id) VALUES ($1, $2)")
-                    .bind(&trip.id)
-                    .bind(&driver.id),
-            )
+        self._release_driver(&mut tx, &mut trip, driver_id, false)
             .await?;
-
-            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
-        } else {
-            tx.execute(sqlx::query("UPDATE driver_priorities SET priority = LEAST(1, priority + 1) WHERE driver_id = $1").bind(&driver.id)).await?;
-        }
 
         tx.commit().await?;
 
         Ok(trip)
     }
 
-    async fn assign_driver(&self, id: Uuid, user_id: Uuid) -> Result<Trip, Error> {
+    async fn accept_trip(&self, user: User, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
         let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
 
-        let driver_id = trip.assign_driver()?;
+        self.authorize(user.clone(), "accept_trip", trip.clone())?;
 
-        if driver_id != user_id {
-            return Err(invalid_invocation_error());
-        }
+        trip.assign_driver()?;
 
-        let mut driver = self.fetch_driver_for_update(&mut tx, &driver_id).await?;
+        let mut driver = self.fetch_driver_for_update(&mut tx, &user.id).await?;
 
         driver.assign()?;
 
@@ -565,26 +605,31 @@ impl TripAPI for Engine {
         Ok(trip)
     }
 
-    async fn cancel_trip(&self, id: Uuid, user_id: Option<Uuid>) -> Result<Trip, Error> {
+    async fn reject_trip(&self, user: User, id: Uuid) -> Result<Trip, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
         let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
 
-        let mut is_passenger = false;
-        if let Some(user_id) = user_id {
-            if trip.passenger_id == user_id {
-                is_passenger = true;
-            } else {
-                if let Some(driver_id) = trip.driver_id {
-                    if driver_id != user_id {
-                        return Err(invalid_invocation_error());
-                    }
-                } else {
-                    return Err(invalid_invocation_error());
-                }
-            }
-        }
+        self.authorize(user.clone(), "reject_trip", trip.clone())?;
+
+        self._release_driver(&mut tx, &mut trip, user.id.clone(), true)
+            .await?;
+
+        tx.commit().await?;
+
+        Ok(trip)
+    }
+
+    async fn cancel_trip(&self, user: User, id: Uuid) -> Result<Trip, Error> {
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let mut trip = self.fetch_trip_for_update(&mut tx, &id).await?;
+
+        self.authorize(user.clone(), "cancel_trip", trip.clone())?;
+
+        let is_passenger = user.id == trip.passenger_id;
 
         let freed_driver = trip.cancel(is_passenger)?;
 
@@ -606,8 +651,8 @@ impl TripAPI for Engine {
 #[async_trait]
 impl DriverAPI for Engine {
     #[tracing::instrument(skip(self))]
-    async fn create_driver(&self, user_id: Uuid) -> Result<Driver, Error> {
-        let driver = Driver::new(user_id);
+    async fn create_driver(&self, user: User) -> Result<Driver, Error> {
+        let driver = Driver::new(user.id);
 
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
@@ -615,7 +660,7 @@ impl DriverAPI for Engine {
         tx.execute(
             sqlx::query("INSERT INTO drivers (id, status, data) VALUES ($1, $2, $3)")
                 .bind(&driver.id)
-                .bind(&driver.status_string())
+                .bind(&driver.status.name())
                 .bind(Json(&driver)),
         )
         .await?;
@@ -645,7 +690,7 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn find_driver(&self, id: Uuid) -> Result<Driver, Error> {
+    async fn find_driver(&self, user: User, id: Uuid) -> Result<Driver, Error> {
         let mut conn = self.pool.acquire().await?;
 
         let Json(driver) = conn
@@ -658,7 +703,7 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn start_driver(&self, id: Uuid) -> Result<Driver, Error> {
+    async fn start_driver(&self, user: User, id: Uuid) -> Result<Driver, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
@@ -674,7 +719,7 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn stop_driver(&self, id: Uuid) -> Result<Driver, Error> {
+    async fn stop_driver(&self, user: User, id: Uuid) -> Result<Driver, Error> {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
 
@@ -692,6 +737,7 @@ impl DriverAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn update_driver_location(
         &self,
+        user: User,
         id: Uuid,
         coordinates: Coordinates,
     ) -> Result<(), Error> {
@@ -713,7 +759,13 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn update_driver_rate(&self, id: Uuid, min_fare: f64, rate: f64) -> Result<(), Error> {
+    async fn update_driver_rate(
+        &self,
+        user: User,
+        id: Uuid,
+        min_fare: f64,
+        rate: f64,
+    ) -> Result<(), Error> {
         let mut conn = self.pool.acquire().await?;
 
         conn.execute(
