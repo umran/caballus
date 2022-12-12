@@ -45,12 +45,6 @@ pub trait DriverAPI {
     async fn find_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
     async fn start_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
     async fn stop_driver(&self, user: User, id: Uuid) -> Result<Driver, Error>;
-    async fn update_driver_location(
-        &self,
-        user: User,
-        id: Uuid,
-        coordinates: Coordinates,
-    ) -> Result<(), Error>;
     async fn update_driver_rate(
         &self,
         user: User,
@@ -60,4 +54,30 @@ pub trait DriverAPI {
     ) -> Result<(), Error>;
 }
 
-pub trait API: LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI {}
+#[async_trait]
+pub trait DriverLocationAPI {
+    async fn update_driver_location(
+        &self,
+        user: User,
+        id: Uuid,
+        coordinates: Coordinates,
+    ) -> Result<(), Error>;
+}
+
+#[async_trait]
+pub trait DriverSearchAPI {
+    async fn synchronize_drivers(&self, user: User, drivers: Vec<Driver>) -> Result<(), Error>;
+    async fn find_drivers(&self, user: User, trip: Trip) -> Result<Vec<(Uuid, f64)>, Error>;
+}
+
+// service boundaries
+pub trait LocationService: LocationAPI {}
+
+pub trait RouteService: RouteAPI {}
+
+pub trait BookingService: TripAPI + DriverAPI {}
+
+pub trait DriverSearchService: DriverSearchAPI + DriverLocationAPI + QuoteAPI {}
+
+// complete api
+pub trait API: LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI + DriverLocationAPI {}

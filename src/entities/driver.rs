@@ -15,7 +15,7 @@ pub struct Driver {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum Status {
-    Idle,
+    Inactive,
     Available,
     Requested { trip_id: Uuid },
     Assigned { trip_id: Uuid },
@@ -24,10 +24,10 @@ pub enum Status {
 impl Status {
     pub fn name(&self) -> String {
         match self {
-            Status::Idle => "IDLE".into(),
-            Status::Available => "AVAILABLE".into(),
-            Status::Requested { trip_id: _ } => "REQUESTED".into(),
-            Status::Assigned { trip_id: _ } => "ASSIGNED".into(),
+            Self::Inactive => "inactive".into(),
+            Self::Available => "available".into(),
+            Self::Requested { trip_id: _ } => "requested".into(),
+            Self::Assigned { trip_id: _ } => "assigned".into(),
         }
     }
 }
@@ -55,7 +55,7 @@ impl Driver {
     pub fn new(user_id: Uuid) -> Self {
         Self {
             id: user_id,
-            status: Status::Idle,
+            status: Status::Inactive,
         }
     }
 
@@ -101,7 +101,7 @@ impl Driver {
     #[tracing::instrument]
     pub fn start(&mut self) -> Result<(), Error> {
         match self.status {
-            Status::Idle => {
+            Status::Inactive => {
                 self.status = Status::Available;
                 Ok(())
             }
@@ -113,7 +113,7 @@ impl Driver {
     pub fn stop(&mut self) -> Result<(), Error> {
         match self.status {
             Status::Available => {
-                self.status = Status::Idle;
+                self.status = Status::Inactive;
                 Ok(())
             }
             _ => Err(invalid_invocation_error()),

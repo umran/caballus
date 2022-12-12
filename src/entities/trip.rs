@@ -55,19 +55,19 @@ pub enum PenaltyBearer {
 impl Status {
     pub fn name(&self) -> String {
         match self {
-            Status::Searching => "SEARCHING".to_string(),
-            Status::PendingAssignment {
+            Self::Searching => "searching".into(),
+            Self::PendingAssignment {
                 deadline: _,
                 driver_id: _,
                 fare: _,
-            } => "PENDING_ASSIGNMENT".to_string(),
-            Status::DriverEnRoute { deadline: _ } => "DRIVER_EN_ROUTE".to_string(),
-            Status::DriverArrived {
+            } => "pending_assessment".into(),
+            Self::DriverEnRoute { deadline: _ } => "driver_en_route".into(),
+            Self::DriverArrived {
                 is_late: _,
                 timestamp: _,
-            } => "DRIVER_ARRIVED".to_string(),
-            Status::Cancelled { penalty_bearer: _ } => "CANCELLED".to_string(),
-            Status::Completed => "COMPLETED".to_string(),
+            } => "driver_arrived".into(),
+            Self::Cancelled { penalty_bearer: _ } => "cancelled".into(),
+            Self::Completed => "completed".into(),
         }
     }
 }

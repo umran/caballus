@@ -1,16 +1,18 @@
-use super::helpers::{fetch_driver_for_update, fetch_trip_for_update, update_driver, update_trip};
+use super::helpers::{
+    fetch_driver_for_update, fetch_passenger_for_update, fetch_trip_for_update, update_driver,
+    update_passenger, update_trip,
+};
 use super::{Database, Engine};
 
 use async_trait::async_trait;
-use geo_types::Geometry;
-use geozero::wkb;
 use sqlx::{types::Json, Acquire, Executor, Row, Transaction};
 use uuid::Uuid;
 
+use crate::api::DriverSearchAPI;
 use crate::{
     api::{QuoteAPI, TripAPI},
     auth::{Platform, User},
-    entities::{Driver, Trip},
+    entities::Trip,
     error::{invalid_input_error, invalid_invocation_error, Error},
 };
 
@@ -20,21 +22,27 @@ impl TripAPI for Engine {
     async fn create_trip(&self, user: User, quote_token: Uuid) -> Result<Trip, Error> {
         self.authorize(user.clone(), "create_trip", Platform::default())?;
 
-        let passenger_id = user.id;
-        let quote = self.find_quote(user.clone(), quote_token).await?;
-        let trip = Trip::new(passenger_id, quote.route, quote.max_fare);
-
         let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
 
-        // TODO: ensure passenger exists and does not have another active trip while trip is created
+        let quote = self.find_quote(user.clone(), quote_token).await?;
+        let trip = Trip::new(user.id.clone(), quote.route, quote.max_fare);
 
-        conn.execute(
+        // ensure passenger does not have another active trip while trip is created
+        let mut passenger = fetch_passenger_for_update(&mut tx, &trip.passenger_id).await?;
+        passenger.activate(trip.id.clone())?;
+
+        tx.execute(
             sqlx::query("INSERT INTO trips (id, status, data) VALUES ($1, $2, $3)")
                 .bind(&trip.id)
                 .bind(&trip.status.name())
                 .bind(Json(&trip)),
         )
         .await?;
+
+        update_passenger(&mut tx, &passenger).await?;
+
+        tx.commit().await?;
 
         Ok(trip)
     }
@@ -61,8 +69,10 @@ impl TripAPI for Engine {
 
         // fetch trip
         tracing::info!("fetching trip without lock");
-        let Json(trip): Json<Trip> = conn
-            .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
+
+        let Json(trip): Json<Trip> = sqlx::query("SELECT data FROM trips WHERE id = $1")
+            .bind(&id)
+            .fetch_optional(&mut conn)
             .await?
             .ok_or_else(|| invalid_input_error())?
             .try_get("data")?;
@@ -75,122 +85,44 @@ impl TripAPI for Engine {
             return Err(invalid_invocation_error());
         }
 
-        let origin_location: Geometry<f64> = trip.route.origin.coordinates.clone().into();
-        let trip_distance = trip.route.distance;
-        let search_radius = 2000.0;
-
-        // fetch potential driver ids for trip
-        let query = "
-            SELECT
-                d.id AS driver_id
-            FROM
-                drivers d
-                LEFT JOIN driver_rates r ON d.id = r.driver_id
-                LEFT JOIN driver_locations l ON d.id = l.driver_id
-                LEFT JOIN driver_priorities p ON d.id = p.driver_id
-                LEFT JOIN trip_rejections tr ON tr.trip_id = $5 AND d.id = tr.driver_id
-            WHERE
-                d.status = 'AVAILABLE'
-                AND tr.driver_id IS NULL
-                AND r.rate IS NOT NULL
-                AND l.location IS NOT NULL
-                AND l.expiry > now()
-                AND ST_DWithin(l.location, ST_SetSRID($1, 4326), $3)
-                AND
-                    GREATEST(
-                        r.min_fare, r.rate * (
-                            ST_Distance(l.location, ST_SetSRID($1, 4326)) + $2
-                        )
-                    ) <= $4
-            ORDER BY
-                p.priority ASC,
-                ST_Distance(l.location, ST_SetSRID($1, 4326)) ASC
-        ";
-
-        tracing::info!("fetching potential drivers...");
-
-        let results = conn
-            .fetch_all(
-                sqlx::query(query)
-                    .bind(wkb::Encode(origin_location.clone()))
-                    .bind(trip_distance)
-                    .bind(search_radius)
-                    .bind(trip.max_fare)
-                    .bind(&trip.id),
-            )
-            .await?;
+        // find drivers
+        let drivers = self.find_drivers(user.clone(), trip.clone()).await?;
 
         tracing::info!(
             "iterating through drivers to find a driver that satisfies all conditions..."
         );
 
-        for result in results.iter() {
-            let driver_id: Uuid = result.try_get("driver_id")?;
-
+        for (driver_id, distance) in drivers.into_iter() {
             let mut tx = conn.begin().await?;
+
             let mut trip = fetch_trip_for_update(&mut tx, &id).await?;
+            let mut driver = fetch_driver_for_update(&mut tx, &driver_id).await?;
 
-            // fetch driver for update
-            let query = "
-                SELECT
-                    d.data AS driver,
-                    GREATEST(
-                        r.min_fare, r.rate * (
-                            ST_Distance(l.location, ST_SetSRID($2, 4326)) + $3
-                        )
-                    ) AS fare
-                FROM
-                    drivers d
-                    LEFT JOIN driver_rates r ON d.id = r.driver_id
-                    LEFT JOIN driver_locations l ON d.id = l.driver_id
-                    LEFT JOIN trip_rejections tr ON tr.trip_id = $6 AND d.id = tr.driver_id
-                WHERE
-                    d.id = $1
-                    AND d.status = 'AVAILABLE'
-                    AND tr.driver_id IS NULL
-                    AND r.rate IS NOT NULL
-                    AND l.location IS NOT NULL
-                    AND l.expiry > now()
-                    AND ST_DWithin(l.location, ST_SetSRID($2, 4326), $4)
-                    AND
-                        GREATEST(
-                            r.min_fare, r.rate * (
-                                ST_Distance(l.location, ST_SetSRID($2, 4326)) + $3
-                            )
-                        ) <= $5
-                FOR UPDATE OF d
-            ";
+            if !driver.is_available() {
+                continue;
+            }
 
-            tracing::info!("fetching driver for update");
+            let (min_fare, rate): (f64, f64) = sqlx::query_as(
+                "SELECT min_fare, rate FROM driver_rates WHERE driver_id = $1 FOR UPDATE",
+            )
+            .bind(&driver.id)
+            .fetch_one(&mut tx)
+            .await?;
 
-            let maybe_result = tx
-                .fetch_optional(
-                    sqlx::query(query)
-                        .bind(&driver_id)
-                        .bind(wkb::Encode(origin_location.clone()))
-                        .bind(trip_distance)
-                        .bind(search_radius)
-                        .bind(trip.max_fare)
-                        .bind(&trip.id),
-                )
-                .await?;
+            let fare = f64::max(min_fare, (distance + trip.route.distance) * rate);
 
-            if maybe_result.is_none() {
-                tracing::info!(
-                    "driver did not satisfy all conditions, moving on to next driver..."
-                );
+            if fare > trip.max_fare {
+                continue;
+            }
+
+            let maybe_trip_rejection = sqlx::query("SELECT driver_id FROM trip_rejections WHERE trip_id = $1 AND driver_id = $2 FOR UPDATE").bind(&trip.id).bind(&driver.id).fetch_optional(&mut tx).await?;
+            if maybe_trip_rejection.is_some() {
                 continue;
             }
 
             tracing::info!(
                 "driver satisfies all conditions, attempting to update trip and driver..."
             );
-
-            // note that unwrap will never panic because it is never called if maybe_result is none
-            let result = maybe_result.unwrap();
-
-            let Json(mut driver): Json<Driver> = result.try_get("driver")?;
-            let fare: f64 = result.try_get("fare")?;
 
             driver.request(trip.id.clone())?;
             trip.request_driver(driver_id.clone(), fare)?;
@@ -244,7 +176,10 @@ impl TripAPI for Engine {
         update_trip(&mut tx, &trip).await?;
         update_driver(&mut tx, &driver).await?;
 
-        tx.execute(sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1").bind(&driver.id)).await?;
+        sqlx::query("UPDATE driver_priorities SET priority = GREATEST(0, priority - 1) WHERE driver_id = $1")
+            .bind(&driver.id)
+            .execute(&mut tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -286,6 +221,11 @@ impl TripAPI for Engine {
 
             update_driver(&mut tx, &driver).await?;
         }
+
+        let mut passenger = fetch_passenger_for_update(&mut tx, &trip.passenger_id).await?;
+        passenger.deactivate()?;
+
+        update_passenger(&mut tx, &passenger).await?;
 
         tx.commit().await?;
 

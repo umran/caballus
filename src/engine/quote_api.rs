@@ -41,7 +41,7 @@ impl QuoteAPI for Engine {
                         LEFT JOIN driver_rates r ON d.id = r.driver_id
                         LEFT JOIN driver_locations l ON d.id = l.driver_id
                     WHERE
-                        d.status = 'AVAILABLE'
+                        d.status = 'available'
                         AND r.rate IS NOT NULL
                         AND l.location IS NOT NULL
                         AND l.expiry > now()

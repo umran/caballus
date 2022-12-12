@@ -2,16 +2,13 @@ use super::helpers::{fetch_driver_for_update, update_driver};
 use super::Engine;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
-use geo_types::Geometry;
-use geozero::wkb;
 use sqlx::{types::Json, Acquire, Executor, Row};
 use uuid::Uuid;
 
 use crate::{
-    api::{DriverAPI, API},
+    api::DriverAPI,
     auth::User,
-    entities::{Coordinates, Driver},
+    entities::Driver,
     error::{invalid_input_error, Error},
 };
 
@@ -102,30 +99,6 @@ impl DriverAPI for Engine {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn update_driver_location(
-        &self,
-        user: User,
-        id: Uuid,
-        coordinates: Coordinates,
-    ) -> Result<(), Error> {
-        let mut conn = self.pool.acquire().await?;
-
-        let coordinates: Geometry<f64> = coordinates.into();
-
-        conn.execute(
-            sqlx::query(
-                "UPDATE driver_locations SET location = ST_SetSRID($2, 4326), expiry = $3 WHERE driver_id = $1",
-            )
-            .bind(&id)
-            .bind(wkb::Encode(coordinates))
-            .bind(Utc::now() + Duration::seconds(60)),
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
     async fn update_driver_rate(
         &self,
         user: User,
@@ -146,5 +119,3 @@ impl DriverAPI for Engine {
         Ok(())
     }
 }
-
-impl API for Engine {}

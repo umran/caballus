@@ -1,4 +1,6 @@
 mod driver_api;
+mod driver_location_api;
+mod driver_search_api;
 mod helpers;
 mod location_api;
 mod quote_api;
@@ -9,6 +11,7 @@ use oso::Oso;
 use sqlx::{Executor, Pool, Postgres};
 
 use crate::{
+    api::API,
     auth::authorizor,
     error::{unauthorized_error, Error},
 };
@@ -48,6 +51,11 @@ impl Engine {
             .await?;
         pool.execute("CREATE TABLE trip_rejections (trip_id UUID NOT NULL, driver_id UUID NOT NULL, PRIMARY KEY (trip_id, driver_id))")
             .await?;
+
+        pool.execute("DROP TABLE IF EXISTS passengers CASCADE")
+            .await?;
+        pool.execute("CREATE TABLE passengers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
+                .await?;
 
         pool.execute("DROP TABLE IF EXISTS drivers CASCADE").await?;
         pool.execute("CREATE TABLE drivers (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
@@ -98,3 +106,5 @@ impl Engine {
         Err(unauthorized_error())
     }
 }
+
+impl API for Engine {}

@@ -55,3 +55,54 @@ has_role(user: User, "driver", trip: Trip) if
 has_role(user: User, "system", trip: Trip) if
     has_role(user, "system", Platform.default()) and
     has_relation(Platform.default(), "platform", trip);
+
+# resource Member {
+#     permissions = [];
+#     roles = ["owner", "system"];
+# }
+
+# resource Passenger {
+#     permissions = [];
+#     roles = ["owner", "system"];
+# }
+
+resource Driver {
+    permissions = [
+        "read",
+        "start",
+        "stop",
+        "update_rate",
+        "update_location",
+
+        # to be implemented
+        "request_verification",
+        "verify",
+        "suspend",
+        "unsuspend"
+    ];
+    
+    roles = ["owner", "system"];
+    relations = { platform: Platform };
+
+    "read" if "owner";
+    "start" if "owner";
+    "stop" if "owner";
+    "update_rate" if "owner";
+    "update_location" if "owner";
+    "request_verification" if "owner";
+
+    "read" if "system";
+    "verify" if "system";
+    "suspend" if "system";
+    "unsuspend" if "system";
+}
+
+has_relation(platform: Platform, "platform", _: Driver) if
+    platform.id = Platform.default().id;
+
+has_role(user: User, "owner", driver: Driver) if
+    user.id = driver.id;
+
+has_role(user: User, "system", driver: Driver) if
+    has_role(user, "system", Platform.default()) and
+    has_relation(Platform.default(), "platform", driver);
