@@ -231,6 +231,14 @@ impl TripAPI for Engine {
 
         Ok(trip)
     }
+
+    async fn report_origin_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error> {
+        unimplemented!()
+    }
+
+    async fn report_destination_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error> {
+        unimplemented!()
+    }
 }
 
 async fn release_driver(

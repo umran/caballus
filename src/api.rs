@@ -37,6 +37,8 @@ pub trait TripAPI {
     async fn accept_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
     async fn reject_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
     async fn cancel_trip(&self, user: User, id: Uuid) -> Result<Trip, Error>;
+    async fn report_origin_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error>;
+    async fn report_destination_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error>;
 }
 
 #[async_trait]

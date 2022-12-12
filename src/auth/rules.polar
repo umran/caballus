@@ -20,7 +20,7 @@ has_role(user: User, role: String, platform: Platform) if
     platform.id = Platform.default().id;
 
 resource Trip {
-    permissions = ["read", "request_driver", "release_driver", "accept", "reject", "cancel"];
+    permissions = ["read", "request_driver", "release_driver", "accept", "reject", "cancel", "report_origin_arrival", "report_destination_arrival"];
     roles = ["passenger", "driver_candidate", "driver", "system"];
     relations = { platform: Platform };
 
@@ -33,6 +33,8 @@ resource Trip {
 
     "read" if "driver";
     "cancel" if "driver";
+    "report_origin_arrival" if "driver";
+    "report_destination_arrival" if "driver";
 
     "read" if "system";
     "request_driver" if "system";
