@@ -3,6 +3,7 @@ mod driver_location_api;
 mod driver_search_api;
 mod helpers;
 mod location_api;
+mod passenger_api;
 mod quote_api;
 mod route_api;
 mod trip_api;

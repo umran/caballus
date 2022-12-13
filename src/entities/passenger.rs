@@ -28,6 +28,13 @@ impl Status {
 }
 
 impl Passenger {
+    pub fn new(id: Uuid) -> Self {
+        Self {
+            id,
+            status: Status::Inactive,
+        }
+    }
+
     pub fn is_active(&self) -> bool {
         match self.status {
             Status::Active { trip_id: _ } => true,

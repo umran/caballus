@@ -233,11 +233,39 @@ impl TripAPI for Engine {
     }
 
     async fn report_origin_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error> {
-        unimplemented!()
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let mut trip = fetch_trip_for_update(&mut tx, &id).await?;
+
+        self.authorize(user.clone(), "report_origin_arrival", trip.clone())?;
+
+        // TODO (umran) verify driver location is within accepted range of origin
+
+        trip.begin_route()?;
+
+        update_trip(&mut tx, &trip).await?;
+
+        tx.commit().await?;
+
+        Ok(trip)
     }
 
     async fn report_destination_arrival(&self, user: User, id: Uuid) -> Result<Trip, Error> {
-        unimplemented!()
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        let mut trip = fetch_trip_for_update(&mut tx, &id).await?;
+
+        self.authorize(user.clone(), "report_destination_arrival", trip.clone())?;
+
+        trip.end_route()?;
+
+        update_trip(&mut tx, &trip).await?;
+
+        tx.commit().await?;
+
+        Ok(trip)
     }
 }
 

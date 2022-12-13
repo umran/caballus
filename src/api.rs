@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::auth::User;
-use crate::entities::{Coordinates, Driver, Location, LocationSource, Quote, Route, Trip};
+use crate::entities::{
+    Coordinates, Driver, Location, LocationSource, Passenger, Quote, Route, Trip,
+};
 use crate::error::Error;
 
 #[async_trait]
@@ -72,14 +74,22 @@ pub trait DriverSearchAPI {
     async fn find_drivers(&self, user: User, trip: Trip) -> Result<Vec<(Uuid, f64)>, Error>;
 }
 
+#[async_trait]
+pub trait PassengerAPI {
+    async fn create_passenger(&self, user: User) -> Result<Passenger, Error>;
+}
+
 // service boundaries
 pub trait LocationService: LocationAPI {}
 
 pub trait RouteService: RouteAPI {}
 
-pub trait BookingService: TripAPI + DriverAPI {}
+pub trait BookingService: TripAPI + DriverAPI + PassengerAPI {}
 
 pub trait DriverSearchService: DriverSearchAPI + DriverLocationAPI + QuoteAPI {}
 
 // complete api
-pub trait API: LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI + DriverLocationAPI {}
+pub trait API:
+    LocationAPI + RouteAPI + QuoteAPI + TripAPI + DriverAPI + DriverLocationAPI + PassengerAPI
+{
+}

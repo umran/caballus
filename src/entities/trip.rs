@@ -166,6 +166,34 @@ impl Trip {
     }
 
     #[tracing::instrument]
+    pub fn begin_route(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::DriverEnRoute { deadline } => {
+                self.status = Status::DriverArrived {
+                    is_late: Utc::now() > deadline,
+                    timestamp: Utc::now(),
+                };
+                Ok(())
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    #[tracing::instrument]
+    pub fn end_route(&mut self) -> Result<(), Error> {
+        match self.status {
+            Status::DriverArrived {
+                is_late: _,
+                timestamp: _,
+            } => {
+                self.status = Status::Completed;
+                Ok(())
+            }
+            _ => Err(invalid_invocation_error()),
+        }
+    }
+
+    #[tracing::instrument]
     pub fn cancel(&mut self, is_passenger: bool) -> Result<Option<Uuid>, Error> {
         let (penalty_bearer, freed_driver_id) = self.cancellation_result(is_passenger)?;
 
