@@ -9,7 +9,7 @@ use crate::{
     api::{LocationAPI, RouteAPI},
     auth::User,
     entities::Route,
-    error::{invalid_input_error, Error},
+    error::Error,
 };
 
 #[async_trait]
@@ -45,7 +45,7 @@ impl RouteAPI for Engine {
             .fetch_optional(sqlx::query("SELECT data FROM routes WHERE token = $1").bind(&token))
             .await?;
 
-        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let result = maybe_result.ok_or_else(|| Error::invalid_input_error())?;
         let Json(route) = result.try_get("data")?;
 
         Ok(route)

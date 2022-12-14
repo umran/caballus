@@ -11,25 +11,34 @@ use uuid::Uuid;
 use crate::api::DriverSearchAPI;
 use crate::{
     api::{QuoteAPI, TripAPI},
-    auth::{Platform, User},
+    auth::User,
     entities::Trip,
-    error::{invalid_input_error, invalid_invocation_error, Error},
+    error::Error,
 };
 
 #[async_trait]
 impl TripAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn create_trip(&self, user: User, quote_token: Uuid) -> Result<Trip, Error> {
-        self.authorize(user.clone(), "create_trip", Platform::default())?;
-
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
+
+        // retrieve passenger or return unauthorized error
+        let mut passenger = fetch_passenger_for_update(&mut tx, &user.id)
+            .await
+            .map_err(|err| {
+                if err.is_invalid_input_error() {
+                    Error::unauthorized_error()
+                } else {
+                    err
+                }
+            })?;
+
+        self.authorize(user.clone(), "create_trip", passenger.clone())?;
 
         let quote = self.find_quote(user.clone(), quote_token).await?;
         let trip = Trip::new(user.id.clone(), quote.route, quote.max_fare);
 
-        // ensure passenger does not have another active trip while trip is created
-        let mut passenger = fetch_passenger_for_update(&mut tx, &trip.passenger_id).await?;
         passenger.activate(trip.id.clone())?;
 
         tx.execute(
@@ -55,7 +64,7 @@ impl TripAPI for Engine {
             .fetch_optional(sqlx::query("SELECT data FROM trips WHERE id = $1").bind(&id))
             .await?;
 
-        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let result = maybe_result.ok_or_else(|| Error::invalid_input_error())?;
         let Json(trip): Json<Trip> = result.try_get("data")?;
 
         self.authorize(user.clone(), "read", trip.clone())?;
@@ -74,7 +83,7 @@ impl TripAPI for Engine {
             .bind(&id)
             .fetch_optional(&mut conn)
             .await?
-            .ok_or_else(|| invalid_input_error())?
+            .ok_or_else(|| Error::invalid_input_error())?
             .try_get("data")?;
 
         // it's safe to perform the authorization check without locking on trip
@@ -82,7 +91,7 @@ impl TripAPI for Engine {
 
         if !trip.is_searching() {
             tracing::info!("trip is not in the SEARCHING state, returning early...");
-            return Err(invalid_invocation_error());
+            return Err(Error::invalid_invocation_error());
         }
 
         // find drivers
@@ -276,7 +285,7 @@ async fn release_driver(
     rejection: bool,
 ) -> Result<(), Error> {
     if trip.release_driver()? != driver_id {
-        return Err(invalid_invocation_error());
+        return Err(Error::invalid_invocation_error());
     }
 
     let mut driver = fetch_driver_for_update(tx, &driver_id).await?;

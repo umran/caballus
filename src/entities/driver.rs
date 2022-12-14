@@ -2,7 +2,7 @@ use oso::PolarClass;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{invalid_invocation_error, Error};
+use crate::error::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PolarClass)]
 pub struct Driver {
@@ -73,7 +73,7 @@ impl Driver {
                 self.status = Status::Requested { trip_id };
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -83,7 +83,7 @@ impl Driver {
                 self.status = Status::Assigned { trip_id };
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -94,7 +94,7 @@ impl Driver {
                 self.status = Status::Available;
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -105,7 +105,7 @@ impl Driver {
                 self.status = Status::Available;
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -116,7 +116,7 @@ impl Driver {
                 self.status = Status::Inactive;
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 }

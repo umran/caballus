@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::Route;
-use crate::error::{invalid_invocation_error, Error};
+use crate::error::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PolarClass)]
 pub struct Trip {
@@ -60,7 +60,7 @@ impl Status {
                 deadline: _,
                 driver_id: _,
                 fare: _,
-            } => "pending_assessment".into(),
+            } => "pending_assignment".into(),
             Self::DriverEnRoute { deadline: _ } => "driver_en_route".into(),
             Self::DriverArrived {
                 is_late: _,
@@ -126,7 +126,7 @@ impl Trip {
                 };
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -141,7 +141,7 @@ impl Trip {
                 self.status = Status::Searching;
                 Ok(driver_id)
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -161,7 +161,7 @@ impl Trip {
 
                 Ok(driver_id)
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -175,7 +175,7 @@ impl Trip {
                 };
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -189,7 +189,7 @@ impl Trip {
                 self.status = Status::Completed;
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -239,7 +239,7 @@ impl Trip {
                     Ok((Some(PenaltyBearer::Driver), self.driver_id.clone()))
                 }
             },
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 }

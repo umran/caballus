@@ -2,7 +2,7 @@ use geo_types::{Geometry, Point};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{invalid_input_error, Error};
+use crate::error::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -48,15 +48,23 @@ impl TryFrom<String> for Coordinates {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let mut components = value.split(",");
 
-        let lat = components.next().ok_or_else(|| invalid_input_error())?;
-        let lng = components.next().ok_or_else(|| invalid_input_error())?;
+        let lat = components
+            .next()
+            .ok_or_else(|| Error::invalid_input_error())?;
+        let lng = components
+            .next()
+            .ok_or_else(|| Error::invalid_input_error())?;
 
         if components.next().is_some() {
-            return Err(invalid_input_error());
+            return Err(Error::invalid_input_error());
         }
 
-        let lat = lat.parse::<f64>().map_err(|_| invalid_input_error())?;
-        let lng = lng.parse::<f64>().map_err(|_| invalid_input_error())?;
+        let lat = lat
+            .parse::<f64>()
+            .map_err(|_| Error::invalid_input_error())?;
+        let lng = lng
+            .parse::<f64>()
+            .map_err(|_| Error::invalid_input_error())?;
 
         Ok(Coordinates { lat, lng })
     }

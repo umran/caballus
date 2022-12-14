@@ -13,25 +13,25 @@ pub struct Error {
 
 impl From<env::VarError> for Error {
     fn from(err: env::VarError) -> Self {
-        env_var_error(err)
+        Error::env_var_error(err)
     }
 }
 
 impl From<sqlx::Error> for Error {
     fn from(err: sqlx::Error) -> Self {
-        sqlx_error(err)
+        Error::sqlx_error(err)
     }
 }
 
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
-        reqwest_error(err)
+        Error::reqwest_error(err)
     }
 }
 
 impl From<oso::OsoError> for Error {
     fn from(err: oso::OsoError) -> Self {
-        oso_error(err)
+        Error::oso_error(err)
     }
 }
 
@@ -52,74 +52,83 @@ impl IntoResponse for Error {
     }
 }
 
-pub fn sqlx_error(err: sqlx::Error) -> Error {
-    tracing::error!("sqlx error: {:?}", err);
+impl Error {
+    pub fn sqlx_error(err: sqlx::Error) -> Error {
+        tracing::error!("sqlx error: {:?}", err);
 
-    Error {
-        code: 2,
-        message: "database error".into(),
+        Error {
+            code: 2,
+            message: "database error".into(),
+        }
     }
-}
 
-pub fn reqwest_error(err: reqwest::Error) -> Error {
-    tracing::error!("reqwest error: {:?}", err);
+    pub fn reqwest_error(err: reqwest::Error) -> Error {
+        tracing::error!("reqwest error: {:?}", err);
 
-    Error {
-        code: 3,
-        message: "reqwest error".into(),
+        Error {
+            code: 3,
+            message: "reqwest error".into(),
+        }
     }
-}
 
-pub fn oso_error(err: oso::OsoError) -> Error {
-    tracing::error!("oso error: {:?}", err);
+    pub fn oso_error(err: oso::OsoError) -> Error {
+        tracing::error!("oso error: {:?}", err);
 
-    Error {
-        code: 4,
-        message: "oso error".into(),
+        Error {
+            code: 4,
+            message: "oso error".into(),
+        }
     }
-}
 
-pub fn env_var_error(err: env::VarError) -> Error {
-    tracing::warn!("env var error: {:?}", err);
+    pub fn env_var_error(err: env::VarError) -> Error {
+        tracing::warn!("env var error: {:?}", err);
 
-    Error {
-        code: 5,
-        message: "environment variable error".into(),
+        Error {
+            code: 5,
+            message: "environment variable error".into(),
+        }
     }
-}
 
-pub fn upstream_error() -> Error {
-    tracing::warn!("upstream error");
+    pub fn upstream_error() -> Error {
+        tracing::warn!("upstream error");
 
-    Error {
-        code: 6,
-        message: "upstream error".into(),
+        Error {
+            code: 6,
+            message: "upstream error".into(),
+        }
     }
-}
 
-pub fn invalid_invocation_error() -> Error {
-    tracing::info!("invalid invocation error");
+    pub fn invalid_invocation_error() -> Error {
+        tracing::info!("invalid invocation error");
 
-    Error {
-        code: 100,
-        message: "invalid invocation error".into(),
+        Error {
+            code: 100,
+            message: "invalid invocation error".into(),
+        }
     }
-}
 
-pub fn invalid_input_error() -> Error {
-    tracing::info!("invalid input error");
+    pub fn invalid_input_error() -> Error {
+        tracing::info!("invalid input error");
 
-    Error {
-        code: 101,
-        message: "invalid input error".into(),
+        Error {
+            code: 101,
+            message: "invalid input error".into(),
+        }
     }
-}
 
-pub fn unauthorized_error() -> Error {
-    tracing::info!("unauthorized error");
+    pub fn unauthorized_error() -> Error {
+        tracing::info!("unauthorized error");
 
-    Error {
-        code: 200,
-        message: "unauthorized error".into(),
+        Error {
+            code: 200,
+            message: "unauthorized error".into(),
+        }
+    }
+
+    pub fn is_invalid_input_error(&self) -> bool {
+        match self.code {
+            101 => true,
+            _ => false,
+        }
     }
 }

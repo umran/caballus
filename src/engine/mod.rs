@@ -11,11 +11,7 @@ mod trip_api;
 use oso::Oso;
 use sqlx::{Executor, Pool, Postgres};
 
-use crate::{
-    api::API,
-    auth::authorizor,
-    error::{unauthorized_error, Error},
-};
+use crate::{api::API, auth::authorizor, error::Error};
 
 type Database = Postgres;
 
@@ -43,7 +39,7 @@ impl Engine {
         pool.execute("CREATE TABLE quotes (token UUID PRIMARY KEY, data JSONB NOT NULL)")
             .await?;
 
-        // trip service
+        // booking service
         pool.execute("DROP TABLE IF EXISTS trips CASCADE").await?;
         pool.execute("CREATE TABLE trips (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
             .await?;
@@ -52,6 +48,10 @@ impl Engine {
             .await?;
         pool.execute("CREATE TABLE trip_rejections (trip_id UUID NOT NULL, driver_id UUID NOT NULL, PRIMARY KEY (trip_id, driver_id))")
             .await?;
+
+        pool.execute("DROP TABLE IF EXISTS members CASCADE").await?;
+        pool.execute("CREATE TABLE members (id UUID PRIMARY KEY, status VARCHAR NOT NULL, data JSONB NOT NULL)")
+                .await?;
 
         pool.execute("DROP TABLE IF EXISTS passengers CASCADE")
             .await?;
@@ -104,7 +104,7 @@ impl Engine {
             return Ok(());
         }
 
-        Err(unauthorized_error())
+        Err(Error::unauthorized_error())
     }
 }
 

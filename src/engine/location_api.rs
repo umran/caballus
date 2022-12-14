@@ -8,7 +8,7 @@ use crate::{
     api::LocationAPI,
     auth::User,
     entities::{Location, LocationSource},
-    error::{invalid_input_error, Error},
+    error::Error,
     external::google_maps,
 };
 
@@ -47,7 +47,7 @@ impl LocationAPI for Engine {
             .fetch_optional(sqlx::query("SELECT data FROM locations WHERE token = $1").bind(&token))
             .await?;
 
-        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let result = maybe_result.ok_or_else(|| Error::invalid_input_error())?;
         let Json(location) = result.try_get("data")?;
 
         Ok(location)

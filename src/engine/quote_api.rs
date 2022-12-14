@@ -10,7 +10,7 @@ use crate::{
     api::{QuoteAPI, RouteAPI},
     auth::User,
     entities::Quote,
-    error::{invalid_input_error, Error},
+    error::Error,
 };
 
 #[async_trait]
@@ -88,7 +88,7 @@ impl QuoteAPI for Engine {
             )
             .await?;
 
-        let result = maybe_result.ok_or_else(|| invalid_input_error())?;
+        let result = maybe_result.ok_or_else(|| Error::invalid_input_error())?;
         let Json(quote) = result.try_get("data")?;
 
         Ok(quote)

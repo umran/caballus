@@ -1,25 +1,32 @@
-use super::helpers::{fetch_driver_for_update, update_driver};
+use super::helpers::{fetch_driver_for_update, fetch_member_for_update, update_driver};
 use super::Engine;
 
 use async_trait::async_trait;
 use sqlx::{types::Json, Acquire, Executor, Row};
 use uuid::Uuid;
 
-use crate::{
-    api::DriverAPI,
-    auth::User,
-    entities::Driver,
-    error::{invalid_input_error, Error},
-};
+use crate::{api::DriverAPI, auth::User, entities::Driver, error::Error};
 
 #[async_trait]
 impl DriverAPI for Engine {
     #[tracing::instrument(skip(self))]
     async fn create_driver(&self, user: User) -> Result<Driver, Error> {
-        let driver = Driver::new(user.id);
-
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
+
+        let member = fetch_member_for_update(&mut tx, &user.id)
+            .await
+            .map_err(|err| {
+                if err.is_invalid_input_error() {
+                    Error::unauthorized_error()
+                } else {
+                    err
+                }
+            })?;
+
+        self.authorize(user.clone(), "create_driver", member.clone())?;
+
+        let driver = Driver::new(user.id);
 
         tx.execute(
             sqlx::query("INSERT INTO drivers (id, status, data) VALUES ($1, $2, $3)")
@@ -57,11 +64,13 @@ impl DriverAPI for Engine {
     async fn find_driver(&self, user: User, id: Uuid) -> Result<Driver, Error> {
         let mut conn = self.pool.acquire().await?;
 
-        let Json(driver) = conn
+        let Json(driver): Json<Driver> = conn
             .fetch_optional(sqlx::query("SELECT data FROM drivers WHERE id = $1").bind(&id))
             .await?
-            .ok_or_else(|| invalid_input_error())?
+            .ok_or_else(|| Error::invalid_input_error())?
             .try_get("data")?;
+
+        self.authorize(user.clone(), "read", driver.clone())?;
 
         Ok(driver)
     }
@@ -72,6 +81,8 @@ impl DriverAPI for Engine {
         let mut tx = conn.begin().await?;
 
         let mut driver = fetch_driver_for_update(&mut tx, &id).await?;
+
+        self.authorize(user.clone(), "start", driver.clone())?;
 
         driver.start()?;
 
@@ -88,6 +99,8 @@ impl DriverAPI for Engine {
         let mut tx = conn.begin().await?;
 
         let mut driver = fetch_driver_for_update(&mut tx, &id).await?;
+
+        self.authorize(user.clone(), "stop", driver.clone())?;
 
         driver.stop()?;
 
@@ -107,14 +120,21 @@ impl DriverAPI for Engine {
         rate: f64,
     ) -> Result<(), Error> {
         let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
 
-        conn.execute(
+        let driver = fetch_driver_for_update(&mut tx, &user.id).await?;
+
+        self.authorize(user.clone(), "update_rate", driver.clone())?;
+
+        tx.execute(
             sqlx::query("UPDATE driver_rates SET min_fare = $2, rate = $3 WHERE driver_id = $1")
                 .bind(&id)
                 .bind(min_fare)
                 .bind(rate),
         )
         .await?;
+
+        tx.commit().await?;
 
         Ok(())
     }

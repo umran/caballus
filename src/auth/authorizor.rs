@@ -1,13 +1,14 @@
 use oso::{Oso, PolarClass};
 
-use crate::auth::{Platform, User};
-use crate::entities::{Driver, Trip};
+use crate::auth::User;
+use crate::entities::{Driver, Member, Passenger, Trip};
 
 pub fn new() -> Oso {
     let mut o = Oso::new();
 
-    o.register_class(Platform::get_polar_class()).unwrap();
     o.register_class(User::get_polar_class()).unwrap();
+    o.register_class(Member::get_polar_class()).unwrap();
+    o.register_class(Passenger::get_polar_class()).unwrap();
     o.register_class(Driver::get_polar_class()).unwrap();
     o.register_class(Trip::get_polar_class()).unwrap();
 
@@ -28,35 +29,6 @@ mod tests {
         let destination = origin.clone();
         let route = Route::new(origin, destination, serde_json::json!({}), 100.0);
         Trip::new(passenger_id, route, 100.0)
-    }
-
-    #[test]
-    fn platform_trip_relation_test() {
-        let authorizor = new();
-
-        let trip = new_trip(Uuid::new_v4());
-
-        let result = authorizor.query_rule(
-            "has_relation",
-            (Platform::default(), "platform", trip.clone()),
-        );
-        assert!(result.unwrap().next().unwrap().is_ok());
-    }
-
-    #[test]
-    fn platform_role_test() {
-        use uuid::Uuid;
-
-        let authorizor = new();
-
-        let system = User {
-            id: Uuid::new_v4(),
-            roles: vec!["system".into()],
-        };
-
-        let result =
-            authorizor.query_rule("has_role", (system.clone(), "system", Platform::default()));
-        assert!(result.unwrap().next().unwrap().is_ok());
     }
 
     #[test]

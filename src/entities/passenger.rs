@@ -2,7 +2,7 @@ use oso::PolarClass;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{invalid_invocation_error, Error};
+use crate::error::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PolarClass)]
 pub struct Passenger {
@@ -48,7 +48,7 @@ impl Passenger {
                 self.status = Status::Active { trip_id };
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 
@@ -58,7 +58,7 @@ impl Passenger {
                 self.status = Status::Inactive;
                 Ok(())
             }
-            _ => Err(invalid_invocation_error()),
+            _ => Err(Error::invalid_invocation_error()),
         }
     }
 }
