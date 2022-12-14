@@ -7,7 +7,12 @@ use geozero::wkb;
 use sqlx::Executor;
 use uuid::Uuid;
 
-use crate::{api::DriverLocationAPI, auth::User, entities::Coordinates, error::Error};
+use crate::{
+    api::{DriverAPI, DriverLocationAPI},
+    auth::User,
+    entities::Coordinates,
+    error::Error,
+};
 
 #[async_trait]
 impl DriverLocationAPI for Engine {
@@ -18,6 +23,12 @@ impl DriverLocationAPI for Engine {
         id: Uuid,
         coordinates: Coordinates,
     ) -> Result<(), Error> {
+        self.authorize(
+            user.clone(),
+            "update_location",
+            self.find_driver(user.clone(), id.clone()).await?,
+        )?;
+
         let mut conn = self.pool.acquire().await?;
 
         let coordinates: Geometry<f64> = coordinates.into();
