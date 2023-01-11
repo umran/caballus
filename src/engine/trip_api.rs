@@ -37,7 +37,7 @@ impl TripAPI for Engine {
         self.authorize(user.clone(), "create_trip", passenger.clone())?;
 
         let quote = self.find_quote(user.clone(), quote_token).await?;
-        let trip = Trip::new(user.id.clone(), quote.route, quote.max_fare);
+        let trip = Trip::new(passenger.id.clone(), quote.route, quote.max_fare);
 
         passenger.activate(trip.id.clone())?;
 
